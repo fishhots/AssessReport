@@ -1,0 +1,1 @@
+"""Teaching quality report workflow."""

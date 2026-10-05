@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: cn.assessreport.WorkspaceApiTest
+-------------------------------------------------------------------------------
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.290 s -- in cn.assessreport.WorkspaceApiTest

@@ -1,0 +1,15 @@
+server:
+  port: ${SERVER_PORT:8080}
+spring:
+  application:
+    name: assess-report-api
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 210MB
+app:
+  storage-directory: ${ASSESS_STORAGE_DIR:./data}
+  agent:
+    base-url: ${AGENT_BASE_URL:http://127.0.0.1:8000}
+    enabled: ${AGENT_ENABLED:true}
+    token: ${AGENT_SERVICE_TOKEN:}

@@ -1,0 +1,475 @@
+{
+  "materials" : [ {
+    "id" : "9ecb4124-2ee3-4322-86de-c165f0f1ca19",
+    "name" : "校党办通报[2023]第5期解江凌书记在“勤实信行”作风建设工作动员部署会上的讲话.pdf",
+    "size" : 344704,
+    "category" : "SPEECH",
+    "createdAt" : "2026-10-01T14:19:43.374402400Z"
+  }, {
+    "id" : "9dcd5e6c-0429-45f5-8a48-4f85d4262c01",
+    "name" : "校党办通报[2024]2号解江凌书记、郭福校长在2024年工作部署会暨全校教职工大会上的讲话.pdf",
+    "size" : 1397010,
+    "category" : "SPEECH",
+    "createdAt" : "2026-10-01T14:19:43.377627100Z"
+  }, {
+    "id" : "e67094bb-26fe-4b42-86fe-2c59feed4578",
+    "name" : "校党办通报[2024]3号郭福校长在2024年暑期工作部署会上的讲话.pdf",
+    "size" : 478653,
+    "category" : "SPEECH",
+    "createdAt" : "2026-10-01T14:19:43.380869900Z"
+  }, {
+    "id" : "356c47a4-f160-4b9f-af95-4c272bf56962",
+    "name" : "校党办通报[2024]4号解江凌书记、郭福校长在2024年秋季学期工作部署会上的讲话.pdf",
+    "size" : 830021,
+    "category" : "SPEECH",
+    "createdAt" : "2026-10-01T14:19:43.384872Z"
+  }, {
+    "id" : "deaa872e-7b95-4204-9914-a8911cbf5d17",
+    "name" : "北京信息科技大学原始数据(2025届短期).xlsx",
+    "size" : 1417307,
+    "category" : "DATA",
+    "createdAt" : "2026-10-01T14:19:11.207253Z"
+  }, {
+    "id" : "3b087716-ba22-47e0-9f00-082697833166",
+    "name" : "本校主要指标表（两届合并）.xlsx",
+    "size" : 18180,
+    "category" : "DATA",
+    "createdAt" : "2026-10-01T14:19:11.209995800Z"
+  }, {
+    "id" : "236068e5-75bb-4800-841b-302ff08e1a90",
+    "name" : "本校2025届主要指标表.xlsx",
+    "size" : 16844,
+    "category" : "DATA",
+    "createdAt" : "2026-10-01T07:06:29.576404100Z"
+  } ],
+  "reports" : [ {
+    "id" : "26ebe9d6-91d4-41cb-ba3b-098613bfadf4",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "claude",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "FAILED",
+    "createdAt" : "2026-10-04T14:40:02.531510600Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "FAILED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "WAITING"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "WAITING"
+    }, {
+      "name" : "Word 导出",
+      "status" : "WAITING"
+    } ],
+    "message" : "模型调用失败，请重试；若持续失败，请查看智能体服务日志",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "9a917feb-8875-457e-9586-adab027ac490",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "gpt",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-04T14:00:16.715645700Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "5a0074de-4df4-4529-acd0-3775c6d46d98",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "gemini",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-04T09:06:32.384219300Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "c184c00e-1bd5-43a6-a229-9603fd755d55",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "deepseek",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-04T06:00:54.930926800Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "0f33e1c0-49ba-4ba0-8634-4dc338161a2a",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "qwen",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T16:55:06.991768800Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "36f8fe3a-28ba-43ac-9f1a-9a3490f3d42e",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "glm",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T16:54:50.571629400Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "916a88c1-457d-4e78-b7dc-413f85c2d76f",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "deepseek",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T16:54:26.782880200Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "462ec518-8952-4ddc-b867-9e8430441071",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "qwen",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T09:23:25.768208900Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "b24856ad-f9bf-44b9-8184-4f020af5c625",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "glm",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T09:11:38.970730700Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "f35c7ca9-327f-4b4d-8fe2-8ba616d0f892",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "deepseek",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T08:15:01.937881Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  }, {
+    "id" : "3e09e2c4-df0b-4fcc-b9cd-45a6f7377f1c",
+    "title" : "北京信息科技大学2025届毕业生培养质量评价报告",
+    "school" : "北京信息科技大学",
+    "year" : 2025,
+    "modelId" : "deepseek",
+    "templateId" : "graduate",
+    "materialIds" : [ "9ecb4124-2ee3-4322-86de-c165f0f1ca19", "9dcd5e6c-0429-45f5-8a48-4f85d4262c01", "e67094bb-26fe-4b42-86fe-2c59feed4578", "356c47a4-f160-4b9f-af95-4c272bf56962", "deaa872e-7b95-4204-9914-a8911cbf5d17", "3b087716-ba22-47e0-9f00-082697833166", "236068e5-75bb-4800-841b-302ff08e1a90" ],
+    "chapters" : [ "核心发现", "第一章 社会需求适应", "第二章 就业质量", "第三章 升学分析", "第四章 五育成效", "第五章 教学培养反馈", "第六章 满意度评价", "第七章 国家级一流本科专业建设点分析" ],
+    "instructions" : "",
+    "status" : "SUCCEEDED",
+    "createdAt" : "2026-10-03T06:29:48.611883300Z",
+    "steps" : [ {
+      "name" : "资料上传与任务配置",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "资料解析与证据整理",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "模板与 Skill 加载",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "培养质量报告撰写",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "个性化与主题报告",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "内容校验与修订",
+      "status" : "COMPLETED"
+    }, {
+      "name" : "Word 导出",
+      "status" : "COMPLETED"
+    } ],
+    "message" : "完整报告已生成，部分内容未完成，详见文内资料缺口说明",
+    "customTopic" : {
+      "title" : "未来5年适应AI技术下的信息类人才培养方向",
+      "requirements" : "希望结合学校目前处境，与教学报告，以及目前AI环境下的信息类人才培养方向来撰写"
+    }
+  } ]
+}
