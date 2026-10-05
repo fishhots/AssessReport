@@ -2,6 +2,9 @@
 import re
 
 
+RECOMMENDATION_LABEL = re.compile(r'^\s*(?:(?:【\s*建议\s*】|\[\s*建议\s*\])\s*)+')
+
+
 AUDIT_CLAUSE = re.compile(
     r'^(?:取自|来源(?:为|于)|数据来源(?:为|于)|来自(?:本校|原表|工作表))|'
     r'(?:原表|原始表|资料|本次资料|上传资料)(?:中)?(?:未列|未提供|亦未提供)[^，；。]*(?:有效样本|样本数|可比|历届|历史|对照|样本量)|'
@@ -16,7 +19,8 @@ AUDIT_CLAUSE = re.compile(
 
 def formal_text(text):
     text = re.sub(r'\*\*(.*?)\*\*',r'\1',text,flags=re.S)
-    text = re.sub(r'^\s*(?:【\s*建议\s*】|\[\s*建议\s*\])\s*', '', text)
+    labelled = bool(RECOMMENDATION_LABEL.match(text))
+    text = RECOMMENDATION_LABEL.sub('', text)
     # Remove only identifiable process/provenance clauses, never actual sample
     # scopes such as studying vs intending to study, or pooled vs annual data.
     sentences=[]
@@ -27,7 +31,14 @@ def formal_text(text):
         clauses=re.split(r'[，；]',body)
         kept=[c for c in clauses if c.strip() and not AUDIT_CLAUSE.search(c.strip())]
         if kept:sentences.append('，'.join(kept)+ending)
-    return ''.join(sentences).strip()
+    body = ''.join(sentences).strip()
+    return ('【建议】' if labelled and body else '') + body
+
+
+def recommendation_paragraph(block, text, show_label=False):
+    """Display a selected action paragraph without marking every recommendation."""
+    body = RECOMMENDATION_LABEL.sub('', text).strip()
+    return ('【建议】' if block.kind == 'recommendation' and show_label and body else '') + body
 
 
 def qualitative_lead(block, text):
@@ -35,7 +46,7 @@ def qualitative_lead(block, text):
     if block.kind not in ('finding', 'inference'):
         return '', text
     if block.summary:
-        summary = formal_text(block.summary).strip()
+        summary = RECOMMENDATION_LABEL.sub('', formal_text(block.summary)).strip()
         if summary and not re.search(r'[\d%％]', summary):
             summary = summary.rstrip('。！？') + '。'
             remainder = text[len(summary):] if text.startswith(summary) else text

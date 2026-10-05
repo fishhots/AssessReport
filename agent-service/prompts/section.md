@@ -17,4 +17,4 @@ uploadedDataCoverage列出全部工作表的统计范围；inspect_data_coverage
 取证最多四轮模型调用，优先一次查清本章关键字段和证据，不逐张遍历缺失图表。prepared/rendered 状态的图表由系统自动校验并附加，不需要逐个调用 render_chart 或 validate_chart。已取得足够证据时尽早提交 SectionDraft；到成文阶段立即根据已有证据输出，剩余缺口明确说明。
 prepared/rendered 的自动图表不填写到 visuals，由系统附加；尤其不要把 datasetId 当作 asset_id。只有工具返回实际 assetId 的手动资源才填写到 visuals。
 
-遵循 writingLimits.maxSubsections 和 paragraphsPerSubsection。专题标题组织为约四个主要主题，每个主题通常2–3段，围绕同一问题连续分析，不把现状、需求信号、能力、约束、情景、方向、成果、路径、条件、评价逐项拆成十个小节。小节标题简短，多个内容块使用同一个 subsection。个性化维度通常2–3节；前八章固定小节名称与顺序仍须逐字保持。recommendation 段落不用【建议】标签，不机械地每段都以“建议”开头。程序已经准备的统计表不再输出数值相同的补充表。
+遵循 writingLimits.maxSubsections 和 paragraphsPerSubsection。专题标题组织为约四个主要主题，每个主题通常2–3段，围绕同一问题连续分析，不把现状、需求信号、能力、约束、情景、方向、成果、路径、条件、评价逐项拆成十个小节。小节标题简短，多个内容块使用同一个 subsection。个性化维度通常2–3节；前八章固定小节名称与顺序仍须逐字保持。recommendationPaths 对应人工版集中建议的位置：有具体校本问题时在分析之后输出独立 recommendation 段，包含改进对象、措施和预期作用；程序仅在该位置首个建议段加【建议】，不要求每个指标都有建议。个性化和专题仅对必要的独立重点行动段使用一次【建议】，其他段自然衔接，不机械地每段都以“建议”开头。程序已经准备的统计表不再输出数值相同的补充表。

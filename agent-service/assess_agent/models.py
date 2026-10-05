@@ -226,6 +226,7 @@ class SectionWriter:
             "initialEvidence": self.evidence.balanced_speech(query) if statistics else self.evidence.search(query, limit=4),
             "fixedOutline": chapter.get('outline',[]),
             "templateTopics": chapter.get('topics', []),
+            "recommendationPaths": chapter.get('recommendationPaths', []),
             "verifiedStatistics": statistics,
             "tables": [{"materialId": t.material_id, "sheet": t.sheet,
                         "columns": ([c for c in t.columns if any(k in c for k in tokens)][:30] if len(t.columns)>60 else t.columns),

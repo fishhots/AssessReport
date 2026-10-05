@@ -19,7 +19,7 @@ from .errors import AgentError
 from .schemas import JobRequest, SectionDraft
 from .settings import CHAPTERS, DIAGNOSIS_TITLES, REPORT_CONFIG, SERVICE_ROOT
 from .validation import subsection_paths, document_paths, template_coverage, subsection_aliases
-from .report_style import formal_text, visual_note, qualitative_lead
+from .report_style import formal_text, visual_note, qualitative_lead, recommendation_paragraph
 from .table_layout import comparison_table_view, duplicate_statistic_table
 
 
@@ -450,6 +450,9 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
         paths=document_paths(section)
         aliases=subsection_aliases(section)
         fixed_paths=subsection_paths(section.title)
+        chapter_config=next((c for c in REPORT_CONFIG['chapters'] if c['title']==section.title), {})
+        recommendation_paths=set(chapter_config.get('recommendationPaths', []))
+        labelled_recommendations=set()
         fallback=fixed_paths[0] if fixed_paths else ''
         from .visuals import ITEMS
         mixed=any(b.kind!='gap' for b in section.blocks) or bool(section.visuals or section.tables)
@@ -466,6 +469,14 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
                 text=re.sub(r'\{\$届次\}',str(request.year),text)
                 text=formal_text(text)
                 if not text:continue
+                # The original report labels selected summary/action paragraphs.
+                # Extensions may request a label once per main theme.
+                label_scope=path if fixed_paths else path.split(' / ')[0]
+                show_label=(block.kind=='recommendation' and label_scope not in labelled_recommendations and
+                            (path in recommendation_paths or (not fixed_paths and text.startswith('【建议】'))))
+                text=recommendation_paragraph(block,text,show_label)
+                if not text:continue
+                if show_label:labelled_recommendations.add(label_scope)
                 paragraph = document.add_paragraph()
                 lead, remainder = qualitative_lead(block, text) if not introduced else ('', text)
                 if lead:

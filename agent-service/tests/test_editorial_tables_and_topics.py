@@ -127,7 +127,7 @@ def test_topic_consolidation_retains_all_text_and_references_and_respects_explic
     assert len({b.subsection for b in formal.blocks})==10
 
 
-def test_export_consolidates_saved_topic_and_removes_recommendation_labels(tmp_path):
+def test_export_consolidates_saved_topic_and_limits_recommendation_labels(tmp_path):
     store,table=survey_store(['届次'],[['2025']])
     request=JobRequest(task_id=uuid4(),school='测试大学',year=2025,model_id='deepseek',chapters=[CHAPTERS[1]],
         materials=[{'id':table.material_id,'name':table.name,'category':'DATA'}])
@@ -137,9 +137,54 @@ def test_export_consolidates_saved_topic_and_removes_recommendation_labels(tmp_p
     export_document(request,[draft],store,output,'毕业生培养质量评价报告',[draft.title])
     document=Document(output)
     assert [p.text for p in document.paragraphs if p.style.name=='Heading 2']==list(TOPIC_HEADINGS)
-    assert not any('【建议】' in p.text for p in document.paragraphs)
+    labelled=[p.text for p in document.paragraphs if p.text.startswith('【建议】')]
+    assert len(labelled)==len(TOPIC_HEADINGS)
+    assert all(p.text.count('【建议】')<=1 for p in document.paragraphs)
+    for block in draft.blocks:
+        assert any(block.text.removeprefix('【建议】') in p.text for p in document.paragraphs)
     assert len({b.subsection for b in draft.blocks})==10
-    assert formal_text('【建议】建议完善课程。')=='建议完善课程。'
+    assert formal_text('【建议】建议完善课程。')=='【建议】建议完善课程。'
+
+
+def test_export_retains_manual_recommendation_positions_without_labelling_all_blocks(tmp_path):
+    store,table=survey_store(['届次'],[['2025']])
+    request=JobRequest(task_id=uuid4(),school='测试大学',year=2025,model_id='deepseek',chapters=CHAPTERS,
+        materials=[{'id':table.material_id,'name':table.name,'category':'DATA'}])
+    positions={CHAPTERS[0]:['教学成效 / 适应度','培养过程 / “AI+”教育','教师队伍 / 教学投入'],
+        **{title:['本章小结'] for title in CHAPTERS[1:8]}}
+    sections=[]
+    expected=[]
+    for title in CHAPTERS:
+        paths=positions.get(title,['项目背景介绍 / 背景介绍'])
+        blocks=[]
+        for path in paths:
+            prefix=title+' '+path
+            blocks.extend([
+                {'kind':'finding','subsection':path,'text':'【建议】'+prefix+'的现状分析。'},
+                {'kind':'recommendation','subsection':path,'text':prefix+'的重点改进措施。'},
+                {'kind':'recommendation','subsection':path,'text':'【建议】'+prefix+'的后续落实措施。'},
+            ])
+            if title in positions:expected.append('【建议】'+prefix+'的重点改进措施。')
+        if title==CHAPTERS[0]:
+            blocks.append({'kind':'recommendation','subsection':'教学成效 / 达成度','text':'【建议】普通指标的简短建议。'})
+        sections.append(SectionDraft(title=title,blocks=blocks))
+    before=[section.model_dump() for section in sections]
+    output=tmp_path/'manual-positions.docx'
+    export_document(request,sections,store,output,'毕业生培养质量评价报告',CHAPTERS)
+    paragraphs=[p.text for p in Document(output).paragraphs]
+    assert [p for p in paragraphs if p.startswith('【建议】')]==expected
+    assert len(expected)==10
+    assert '普通指标的简短建议。' in paragraphs
+    assert not any(p.startswith('【建议】') and ('现状分析' in p or '后续落实' in p) for p in paragraphs)
+    for section in sections:
+        for block in section.blocks:
+            assert any(block.text.removeprefix('【建议】') in p for p in paragraphs)
+    assert [section.model_dump() for section in sections]==before
+
+
+def test_recommendation_marker_does_not_hide_process_clauses_or_leave_empty_paragraphs():
+    assert formal_text('**[建议]**【建议】完善课程。取自本校主要指标表。')=='【建议】完善课程。'
+    assert formal_text('【建议】取自本校主要指标表。')==''
 
 
 def test_short_comparison_tables_avoid_isolated_tail_rows_but_long_content_can_paginate():

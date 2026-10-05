@@ -65,6 +65,8 @@ def test_summary_is_a_short_judgement_and_never_bolds_a_metric_list():
         summary='教学与岗位适应表现较好，实践支撑仍需加强。')
     lead, remainder=qualitative_lead(block,block.text)
     assert lead == block.summary and remainder == block.text
+    block.summary='【建议】教学与岗位适应表现较好，实践支撑仍需加强。'
+    assert qualitative_lead(block,block.text)==('教学与岗位适应表现较好，实践支撑仍需加强。',block.text)
     block.summary=''
     assert qualitative_lead(block,block.text) == ('',block.text)
     block.text='人才培养定位落实较好。教学满意度为92.57%。'

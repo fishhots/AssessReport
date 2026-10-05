@@ -286,7 +286,7 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
                 'question': request.custom_topic.requirements,
                 'guidance': '这是用户自定义的专题章节。围绕题目和要求综合校本证据，明确现状、情景假设、路径建议、实施条件和评价方式。'
                             '默认组织为约四个相互衔接的主要小节，每节通常2–3段，不把每个内容块单独变成标题；用户明确提纲优先。'
-                            '自然叙述建议，不使用【建议】等标签。缺少未来规划资料不构成整章跳过的理由，可依据已验证章节提出情景、路径与评价建议。'
+                            '自然叙述建议，只有分析后确需突出独立重点行动段时才标注【建议】，同一主要主题最多一次，连续规划段不重复标记。缺少未来规划资料不构成整章跳过的理由，可依据已验证章节提出情景、路径与评价建议。'
                             '未来规划属于建议或情景，不能写成已发生的事实；不得编造政策、产业预测、课程和学分。',
                 'missingDataHint': '与本主题有关的学校定位、培养与课程现状，以及产业或技术发展依据。'}
             appended.append(validated_write(config, True, related_sections=summaries))
