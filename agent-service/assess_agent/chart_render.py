@@ -16,7 +16,7 @@ import numpy as np
 from .errors import AgentError
 
 COLORS = ["#006B98", "#21A5C1", "#154B78", "#7DC9DA", "#A6CBDC", "#7797B3", "#C8E2EC", "#C8D2DA"]
-STYLE_VERSION = 'manual-blue-2'
+STYLE_VERSION = 'manual-blue-3'
 
 
 def chinese_font():
@@ -43,19 +43,6 @@ def axis_label(name, unit):
 
 def value_label(value,unit):
     return fmt(value)+('%' if unit=='%' else '')
-
-
-def response_grid(ax, figure, names, values, series, font):
-    """Every segment stays readable, including small or zero responses."""
-    table=ax.table(cellText=[[value_label(y[i],'%') for y in values] for i in range(len(names))],
-        rowLabels=[str(i+1) for i in range(len(names))],colLabels=[s['name'] for s in series],
-        cellLoc='center',bbox=[0,-.12-len(names)*.075,1,.1+len(names)*.075])
-    table.auto_set_font_size(False);table.set_fontsize(9)
-    for (r,c),cell in table.get_celld().items():
-        cell.set_edgecolor('#C8D6DE');cell.set_linewidth(.4)
-        cell.get_text().set_fontproperties(font)
-        if r==0:cell.set_facecolor('#EDF5F8');cell.get_text().set_color(COLORS[0])
-    figure.subplots_adjust(left=.32,right=.97,top=.85,bottom=.36)
 
 
 def place_scatter_labels(ax,figure,names,values,font):
@@ -116,7 +103,6 @@ def draw(data: dict, item: dict, directory: Path, asset_id: str) -> list[dict]:
         # and missing count remain in the provenance and document note.
         if not any(np.isfinite(v).any() for v in values): continue
         height = (1.5 if horizontal and len(names)==1 else max(2.6, sum(max(1,len(textwrap.wrap(n,20))) for n in names) * .3 + 1.1)) if horizontal else 3.8
-        if kind=='stacked_bar':height+=1.2+len(names)*.12
         figure = Figure(figsize=(4.4, 3.7) if kind in ('pie','donut') else (8.6, min(height, 7)),
                         dpi=210 if kind in ('pie','donut') else 180, facecolor="white")
         FigureCanvasAgg(figure)
@@ -159,15 +145,6 @@ def draw(data: dict, item: dict, directory: Path, asset_id: str) -> list[dict]:
                 ax.grid(axis="y", color='#DDE6EB',linewidth=.5,alpha=.5)
                 ax.set_ylabel(data["unit"], fontproperties=font)
                 ax.margins(y=0.24)
-                # Small data grid below the curve, including explicit gaps.
-                table = ax.table(cellText=[["—" if not np.isfinite(v) else fmt(v) for v in y] for y in values],
-                                 rowLabels=[s["name"] for s in series], colLabels=names, cellLoc="center", bbox=[0, -0.38, 1, 0.24])
-                table.auto_set_font_size(False)
-                table.set_fontsize(9)
-                for cell in table.get_celld().values():
-                    cell.set_edgecolor("#D5E0E6")
-                    cell.get_text().set_fontproperties(font)
-                figure.subplots_adjust(bottom=0.34)
             elif kind == "stacked_bar":
                 left = np.zeros(len(names))
                 for j, y in enumerate(values):
@@ -180,7 +157,6 @@ def draw(data: dict, item: dict, directory: Path, asset_id: str) -> list[dict]:
                 ax.set_yticks(x, [str(i+1)+'. '+textwrap.fill(n, 22) for i,n in enumerate(names)])
                 ax.invert_yaxis()
                 ax.set_xticks([])
-                response_grid(ax,figure,names,values,series,font)
             elif kind == "mirror_bar":
                 ax.barh(x, -values[0], height=0.58, color=COLORS[0], label=series[0]["name"])
                 ax.barh(x, values[1], height=0.58, color=COLORS[1], label=series[1]["name"])
@@ -235,8 +211,7 @@ def draw(data: dict, item: dict, directory: Path, asset_id: str) -> list[dict]:
                 (ax.axvline if horizontal else ax.axhline)(baseline, color="#658190", linestyle="--", linewidth=1.2, label=label)
             if (len(series) > 1 or has_benchmark or item.get('id')=='figure-5-29') and kind != "scatter":
                 ax.legend(prop=font, loc="lower center", bbox_to_anchor=(0.5, 1.03), ncol=min(4, len(series)), frameon=False, fontsize=9)
-            if kind not in {"line","stacked_bar"}:
-                figure.tight_layout(pad=1.4)
+            figure.tight_layout(pad=1.4)
             label_overlaps=place_scatter_labels(ax,figure,names,values,font) if kind=='scatter' else 0
             path = directory / f"{asset_id}-{page}.png"
             figure.savefig(path, dpi=180, bbox_inches="tight", facecolor="white", metadata={"Software": "AssessReport"})

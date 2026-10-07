@@ -21,11 +21,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = "app.agent.enabled=false")
 @AutoConfigureMockMvc
-class WorkspaceApiTest {
+class WorkspaceApiTest extends AuthenticatedApiTest {
     private static final Path STORAGE;
     static { try { STORAGE = Files.createTempDirectory("assess-report-test-"); } catch (Exception e) { throw new ExceptionInInitializerError(e); } }
     @DynamicPropertySource static void storage(DynamicPropertyRegistry registry) { registry.add("app.storage-directory", () -> STORAGE.toString()); }
-    @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     @Autowired CatalogService catalog;
     @Autowired AgentGateway agent;
@@ -50,7 +49,8 @@ class WorkspaceApiTest {
         String reportId = mapper.readTree(report).get("id").asText();
         mvc.perform(get("/api/reports/" + reportId)).andExpect(status().isOk()).andExpect(jsonPath("$.materialIds[0]").value(id));
         mvc.perform(delete("/api/materials/" + id)).andExpect(status().isConflict());
-        WorkspaceService reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, agent);
+        users.set(testUser);
+        WorkspaceService reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, agent, users);
         assertEquals(reportId, reloaded.report(reportId).id());
         assertEquals("graduate.csv", reloaded.material(id).name());
 
@@ -96,7 +96,8 @@ class WorkspaceApiTest {
             .andExpect(jsonPath("$.customTopic.requirements").value("分析课程与实践的实施路径。"))
             .andReturn().getResponse().getContentAsString();
         String id = mapper.readTree(report).get("id").asText();
-        var reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, agent);
+        users.set(testUser);
+        var reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, agent, users);
         assertEquals("未来AI人才培养方向", reloaded.report(id).customTopic().title());
         for (String title : List.of(" ", "line\nbreak", "a".repeat(101))) {
             input.put("customTopic", Map.of("title", title, "requirements", "分析需求"));

@@ -1,6 +1,7 @@
 package cn.assessreport.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import cn.assessreport.auth.UserContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
@@ -22,10 +23,14 @@ public class HttpAgentGateway implements AgentGateway {
     private final RestClient client;
     private final RestClient modelClient;
     public HttpAgentGateway(@Value("${app.agent.base-url}") String baseUrl,
-            @Value("${app.agent.token:}") String token, ObjectMapper mapper) {
+            @Value("${app.agent.token:}") String token, ObjectMapper mapper, UserContext users) {
         var factory = new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
         factory.setReadTimeout(Duration.ofSeconds(5));
         client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).defaultHeader("X-Agent-Token", token)
+            .requestInterceptor((request, body, execution) -> {
+                request.getHeaders().set("X-Workspace-User", users.require().id());
+                return execution.execute(request,body);
+            })
             .defaultStatusHandler(status -> status.isError(), (request, response) -> {
                 String message = "智能体请求失败，请检查服务后重试";
                 try {

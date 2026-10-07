@@ -47,3 +47,20 @@ def test_title_and_visual_issues_fall_back_to_whole_section_revision():
     draft = original()
     scope = prepare_repair(draft, ["标题须逐字等于：第二章 就业质量"])
     assert scope.whole and scope.input() == draft
+
+
+def test_missing_summary_analysis_is_added_without_rewriting_passed_content():
+    draft=SectionDraft(title='第一章 社会需求适应',blocks=[
+        {'kind':'recommendation','subsection':'本章小结','text':'完善分类指导。'},
+        {'kind':'finding','subsection':'毕业去向 / 毕业去向落实率',
+         'text':'已校验的就业结果。','source_ids':['verified']}])
+    scope=prepare_repair(draft,['第 1 段 本章小结必须先有分析段'])
+    assert not scope.whole and scope.add_summary_analysis
+    revised=SectionDraft(title=draft.title,blocks=[
+        {'kind':'finding','subsection':'本章小结','text':'就业结果体现培养支撑。','source_ids':['verified']},
+        draft.blocks[0]])
+    merged=scope.merge(revised)
+    assert merged.blocks==[revised.blocks[0],draft.blocks[0],draft.blocks[1]]
+    assert merged.blocks[2]==draft.blocks[1]
+    with pytest.raises(AgentError):
+        scope.merge(scope.input())

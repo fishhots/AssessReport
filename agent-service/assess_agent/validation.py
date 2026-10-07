@@ -16,6 +16,15 @@ def subsection_paths(title):
             for topic in chapter.get('topics',[]) if topic['parent']==path)]]
 
 
+def container_only_paths(title):
+    """Reference grouping headings that have no prose before their children."""
+    chapter = next((c for c in REPORT_CONFIG['chapters'] if c['title']==title), {})
+    paths = subsection_paths(title) if chapter else []
+    parent_body_paths = set(chapter.get('parentBodyPaths', []))
+    return {path for path in paths if path not in parent_body_paths and
+            any(child.startswith(path+' / ') for child in paths)}
+
+
 def valid_subsection(title, path):
     if not path:
         return True
@@ -94,15 +103,26 @@ def template_coverage(draft):
             'unwrittenTopics': [path for path in leaves if path not in written]}
 
 
-def validate_section(draft: SectionDraft, title: str, store, year: int, *, review_semantics=True) -> list[str]:
+def validate_section(draft: SectionDraft, title: str, store, year: int, *, review_semantics=True,
+                     review_structure=True) -> list[str]:
     issues = []
     if draft.title != title:
         issues.append(f"标题须逐字等于：{title}")
+    nonleaf_paths = container_only_paths(title)
+    summary_blocks = [block for block in draft.blocks
+                      if block.subsection == '本章小结' and block.kind != 'gap']
+    if review_structure and any(block.kind == 'recommendation' for block in summary_blocks) and not any(
+            block.kind in ('finding', 'inference') for block in summary_blocks):
+        index = next(i for i, block in enumerate(draft.blocks, 1)
+                     if block.subsection == '本章小结' and block.kind == 'recommendation')
+        issues.append(f'第 {index} 段 本章小结必须先有 finding/inference 分析段，再写 recommendation【建议】段；不能直接以建议开篇')
     for index, block in enumerate(draft.blocks, 1):
         if not valid_subsection(title, block.subsection):
             message=('须使用 fixedOutline 原小节名称' if title in [c['title'] for c in REPORT_CONFIG['chapters']]
                      else '须使用简短有效的逻辑标题，诊断维度内部最多两级，合并路径不超过120字')
             issues.append(f"第 {index} 段 subsection {message}")
+        if review_structure and block.kind != 'gap' and block.subsection in nonleaf_paths:
+            issues.append(f"第 {index} 段位于二级父标题“{block.subsection}”下；该标题后须直接进入首个下级指标标题，请把内容移到对应叶子小节或删除重复概述")
         if block.summary and (re.search(r'[\d%％]', block.summary) or
                 len(re.findall(r'[。！？]', block.summary)) > 1):
             issues.append(f"第 {index} 段 summary 须为不含数字的一句简短定性结论，数值放入 text")

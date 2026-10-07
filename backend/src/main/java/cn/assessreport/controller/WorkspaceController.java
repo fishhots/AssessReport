@@ -20,7 +20,7 @@ public class WorkspaceController {
     private final WorkspaceService workspace;
     private final CatalogService catalog;
     public WorkspaceController(WorkspaceService workspace, CatalogService catalog) { this.workspace = workspace; this.catalog = catalog; }
-    @GetMapping("/health") public Map<String, Object> health() { return Map.of("status", "UP", "agentConnected", catalog.get().agentConnected()); }
+    @GetMapping("/health") public Map<String, Object> health() { return Map.of("status", "UP"); }
     @GetMapping("/catalog") public Catalog catalog() { return catalog.get(); }
     @GetMapping("/materials") public List<Material> materials() { return workspace.materials(); }
     @PostMapping(value = "/materials", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

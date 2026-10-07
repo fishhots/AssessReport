@@ -168,8 +168,8 @@ def test_practice_table_matches_reference_comparison_columns_without_losing_valu
     data={'templateId':'table-7-11','columns':['专业','评价项目或主要需求','比例（%）','有效回答人数'],'rows':rows}
     view=comparison_table_view(data)
     assert len(view['columns'])==9 and len(view['rows'])==1
-    assert view['rows'][0][1:]==[str(80+i) for i in range(8)]
-    assert view['headerGroups']==[(0,1,'专业'),(1,4,'校内实习实践评价'),(5,4,'校外实习实践评价')]
+    assert view['rows'][0][1:]==[f'{80+i:.2f}' for i in range(8)]
+    assert view['headerGroups']==[(0,1,'专业名称'),(1,4,'校内实习实践评价'),(5,4,'校外实习实践评价')]
     assert data['rows']==rows  # original denominators remain in audit
 
 
@@ -179,29 +179,31 @@ def test_major_destinations_keep_reference_two_columns_and_all_groups():
                 ['乙学院 / 软件工程','金融业','40','5']]}
     view=comparison_table_view(data)
     assert view['columns']==['专业名称','就业的主要行业'] and len(view['rows'])==2
-    assert view['rows'][0]==['甲学院 / 软件工程','信息业（50.00%）；制造业（30.00%）']
+    assert view['rows'][0]==['甲学院 / 软件工程','信息业；制造业']
     assert data['rows'][0][3]=='10'
     data['rows'][0][2]='—'
-    assert comparison_table_view(data)['rows']==data['rows']
+    assert comparison_table_view(data)['rows'][0]==view['rows'][0]
 
 
 def test_single_teaching_satisfaction_table_does_not_repeat_question_in_every_row():
     data={'templateId':'table-7-8','columns':['专业','评价项目或主要需求','比例（%）','有效回答人数'],
         'rows':[['甲专业','您对教学工作的满意程度','100','8'],['乙专业','您对教学工作的满意程度','80','10']]}
     view=comparison_table_view(data)
-    assert view['columns']==['专业','教学满意度（%）']
-    assert view['rows']==[['甲专业','100.00'],['乙专业','80.00']]
+    assert view['columns']==['专业名称','2022届','2023届','2024届','2025届']
+    assert view['rows']==[['甲专业','—','—','—','100.00'],['乙专业','—','—','—','80.00']]
     assert data['rows'][0][3]=='8'
     data['rows'][1][1]='另一项评价'
-    assert comparison_table_view(data)['rows']==data['rows']
+    assert comparison_table_view(data)['rows']==[['甲专业','—','—','—','100.00']]
 
 
 def test_unknown_metric_is_preserved_and_conflicting_pairs_do_not_get_pivoted():
     data={'templateId':'table-7-10','columns':['专业','评价项目或主要需求','比例（%）','有效回答人数'],
           'rows':[['甲专业','学习指导','90','8'],['甲专业','学习指导','70','5']]}
-    assert comparison_table_view(data)['rows']==data['rows']
+    assert comparison_table_view(data)['rows']==[['甲专业',*['—']*5]]
+    assert data['rows'][1][2]=='70'
     data['rows']=[['甲专业','新增项目','90','8']]
-    assert '新增项目' in comparison_table_view(data)['columns']
+    assert '新增项目' not in comparison_table_view(data)['columns']
+    assert data['rows'][0][1]=='新增项目'
 
 
 def test_table_header_repeat_and_body_bold_are_correct(tmp_path):

@@ -18,6 +18,7 @@ from .repair import prepare_repair
 from .schemas import ContentBlock, Corpus, JobRequest, SectionDraft
 from .settings import REPORT_CONFIG, Settings
 from .store import JobStore, write_json
+from .cache_io import write_cache_json
 from .validation import validate_section, template_coverage, extension_path
 from .visuals import VisualRegistry
 from .survey import SurveyAnalyzer
@@ -45,7 +46,6 @@ def verified_summaries(sections, limit=16):
 
 
 class WorkflowState(TypedDict, total=False):
-    corpus: dict
     report: list[dict]
     diagnosis: list[dict]
     extensions: list[dict]
@@ -79,6 +79,7 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
         write_json(directory / 'report-sections.json', [s.model_dump() for s in sections[:len(request.chapters)]])
         write_json(directory / 'extension-sections.json', [s.model_dump() for s in sections[len(request.chapters):]])
         save_export_checkpoint(request, directory, [s.model_dump() for s in sections], evidence, metadata)
+        write_json(directory / 'recovery-consolidated.json', {'mode': 'export'})
         check_time()
         artifacts = export_report(request, sections, evidence, directory, refresh_fields=settings.update_word_fields)
         check_time()
@@ -109,8 +110,9 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
         from .data_inventory import DataInventory
         runtime['evidence'].inventory=DataInventory(runtime['evidence'],request.year).build()
         write_json(directory/'data-utilization.json',runtime['evidence'].inventory.audit())
-        write_json(directory / "corpus.json", corpus.model_dump(by_alias=True))
-        return {"corpus": corpus.model_dump(by_alias=True)}
+        # Raw uploads remain authoritative. Parsing is repeated on a writing
+        # retry; only accepted content and responses need recovery checkpoints.
+        return {}
 
     def load_skills(state):
         writer = SectionWriter(settings, request, runtime["evidence"], model=model, provider_config=runtime['model_config'])
@@ -302,7 +304,7 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
         if runtime['evidence'].inventory:
             write_json(directory/'data-utilization.json',runtime['evidence'].inventory.audit(
                 [SectionDraft.model_validate(s) for s in state['report']+state['extensions']]))
-        write_json(directory / "corpus.json", runtime["evidence"].corpus.model_dump(by_alias=True))
+        write_cache_json(directory / "corpus.json", runtime["evidence"].corpus.model_dump(by_alias=True))
         writer = runtime['writer']
         save_export_checkpoint(request, directory, state['report'] + state['extensions'], runtime['evidence'], {
             'model': writer.metadata, 'templateVersion': REPORT_CONFIG['version'],
@@ -340,7 +342,11 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
             jobs.phase(task_id, attempt, phase_index, "RUNNING")
             delta = fn(state)
             check_time()
-            write_json(directory / f"stage-{phase_index}.json", {**state, **delta})
+            completed = {**state, **delta}
+            write_json(directory / f"stage-{phase_index}.json", {
+                'phase': phase_index, 'status': 'COMPLETED',
+                'reportSections': len(completed.get('report', [])),
+                'extensionSections': len(completed.get('extensions', []))})
             jobs.phase(task_id, attempt, phase_index, "COMPLETED")
             return delta
         graph.add_node(name, run_node)

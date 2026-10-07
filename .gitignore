@@ -13,6 +13,7 @@ frontend/tsconfig.tsbuildinfo
 agent-service/.venv/
 agent-service/data/
 agent-service/*.egg-info/
+.env.docker
 __pycache__/
 .pytest_cache/
 *.pyc

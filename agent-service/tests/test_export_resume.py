@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from assess_agent.app import create_app
+from assess_agent.cache_io import cache_path, read_cache_json
+from assess_agent.cache_management import cleanup_terminal_task
 from assess_agent.errors import AgentError
 from assess_agent.export_resume import load_export_snapshot
 from assess_agent.models import SectionWriter
@@ -28,6 +30,7 @@ def fail_export_after_writing(tmp_path, monkeypatch):
     with pytest.raises(AgentError) as failure:
         run_workflow(request, settings, jobs, 1, model=ToolCallingTestModel())
     jobs.fail(str(request.task_id), 1, failure.value)
+    cleanup_terminal_task(settings, jobs, str(request.task_id), 1)
     monkeypatch.setattr(workflow, 'export_report', real_export)
     return settings, request, jobs
 
@@ -68,6 +71,13 @@ def test_legacy_completed_glm_snapshot_resumes_without_writer(tmp_path, monkeypa
     root = settings.jobs_root() / str(request.task_id) / 'attempt-1'
     saved = json.loads((root / 'export-checkpoint.json').read_text(encoding='utf-8'))
     (root / 'export-checkpoint.json').unlink()
+    # Explicitly build the old full-state format, rather than a modern journal.
+    (root / 'stage-5.json').write_text(json.dumps({
+        'report': saved['sections'][:len(request.chapters)],
+        'extensions': saved['sections'][len(request.chapters):]}), encoding='utf-8')
+    corpus = read_cache_json(root / 'corpus.json')
+    cache_path(root / 'corpus.json').unlink()
+    (root / 'corpus.json').write_text(json.dumps(corpus), encoding='utf-8')
     (root / 'report.audit.json').write_text(json.dumps({'sections': saved['sections'],
         'coverage': saved['metadata']['templateCoverage']}), encoding='utf-8')
     prohibit_generation(monkeypatch)
@@ -98,7 +108,7 @@ def test_changed_or_corrupted_export_snapshot_fails_without_paid_fallback(tmp_pa
     changed = request.model_copy(update={'instructions': '不同要求'})
     with pytest.raises(AgentError, match='本次未重新调用模型'):
         load_export_snapshot(changed, root)
-    (root / 'corpus.json').write_text('{}', encoding='utf-8')
+    cache_path(root / 'corpus.json').write_bytes(b'corrupted recovery file')
     prohibit_generation(monkeypatch)
     jobs.retry(str(request.task_id))
     with pytest.raises(AgentError) as failure:
@@ -118,6 +128,8 @@ def test_retry_api_export_does_not_require_model_key_or_original_upload(tmp_path
         assert response.status_code == 202
         assert all(s['status'] == 'COMPLETED' for s in response.json()['steps'][:-1])
     assert jobs.get(str(request.task_id))['status'] == 'SUCCEEDED'
+    root = settings.jobs_root() / str(request.task_id)
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()) == ['attempt-2/report.docx']
 
 
 @pytest.mark.parametrize('mode', ['timeout', 'bad_metadata', 'failed', 'success'])

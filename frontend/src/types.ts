@@ -1,4 +1,9 @@
 export type Category = 'DATA' | 'SPEECH' | 'REFERENCE'
+export interface AuthUser {
+  id: string
+  username: string
+  account: string
+}
 export interface Material {
   id: string
   name: string

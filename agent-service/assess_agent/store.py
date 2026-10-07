@@ -22,7 +22,8 @@ def initial_steps() -> list[dict]:
 def write_json(path: Path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    with temporary.open('w', encoding='utf-8') as stream:
+        json.dump(value, stream, ensure_ascii=False, separators=(',', ':'))
     temporary.replace(path)
 
 

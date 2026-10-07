@@ -1,6 +1,7 @@
 package cn.assessreport.service;
 
 import cn.assessreport.agent.AgentGateway;
+import cn.assessreport.auth.UserContext;
 import cn.assessreport.domain.Workspace.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,34 +22,51 @@ public class WorkspaceService {
     private final ObjectMapper mapper;
     private final CatalogService catalog;
     private final AgentGateway agent;
-    private State state;
+    private final UserContext users;
+    private final Map<String,UserWorkspace> workspaces = new HashMap<>();
+    private static class UserWorkspace {
+        final Path root;
+        State state;
+        UserWorkspace(Path root,State state) {this.root=root;this.state=state;}
+    }
 
     public WorkspaceService(@Value("${app.storage-directory}") String directory, ObjectMapper mapper,
-            CatalogService catalog, AgentGateway agent) throws IOException {
+            CatalogService catalog, AgentGateway agent, UserContext users) throws IOException {
         this.root = Path.of(directory).toAbsolutePath().normalize();
         this.mapper = mapper;
         this.catalog = catalog;
         this.agent = agent;
-        Files.createDirectories(root.resolve("uploads"));
-        Path stateFile = root.resolve("workspace.json");
-        state = Files.exists(stateFile) ? mapper.readValue(stateFile.toFile(), State.class) : new State(List.of(), List.of());
+        this.users = users;
+        Files.createDirectories(root.resolve("users"));
     }
-    public synchronized List<Material> materials() { return state.materials(); }
+    private synchronized UserWorkspace scope() {
+        String id=users.require().id();
+        if (!UUID.fromString(id).toString().equals(id)) throw new IllegalArgumentException("用户标识无效");
+        return workspaces.computeIfAbsent(id,key -> {
+            Path directory=root.resolve("users").resolve(key);
+            try {
+                Files.createDirectories(directory.resolve("uploads"));
+                Path file=directory.resolve("workspace.json");
+                return new UserWorkspace(directory,Files.exists(file)?mapper.readValue(file.toFile(),State.class):new State(List.of(),List.of()));
+            } catch (IOException e) {throw new java.io.UncheckedIOException(e);}
+        });
+    }
+    public synchronized List<Material> materials() { return scope().state.materials(); }
     public synchronized List<ReportTask> reports() throws IOException {
-        if (state.reports().stream().anyMatch(r -> Set.of("QUEUED", "RUNNING", "CANCELLING").contains(r.status()))) {
+        if (scope().state.reports().stream().anyMatch(r -> Set.of("QUEUED", "RUNNING", "CANCELLING").contains(r.status()))) {
             try {
                 for (AgentGateway.Job job : agent.jobs()) {
-                    if (state.reports().stream().anyMatch(r -> r.id().equals(job.taskId()))) update(job);
+                    if (scope().state.reports().stream().anyMatch(r -> r.id().equals(job.taskId()))) update(job);
                 }
             } catch (ResponseStatusException unavailable) { /* Keep the last persisted progress. */ }
         }
-        return state.reports();
+        return scope().state.reports();
     }
     public synchronized Material material(String id) {
-        return state.materials().stream().filter(m -> m.id().equals(id)).findFirst()
+        return scope().state.materials().stream().filter(m -> m.id().equals(id)).findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "资料不存在"));
     }
-    public Path filePath(String id) { return root.resolve("uploads").resolve(material(id).id()); }
+    public Path filePath(String id) { return scope().root.resolve("uploads").resolve(material(id).id()); }
     public synchronized List<Material> upload(List<MultipartFile> files, Category category) throws IOException {
         if (files.isEmpty() || files.size() > 20) throw new IllegalArgumentException("每次请上传 1 至 20 个文件");
         for (MultipartFile file : files) {
@@ -63,15 +81,15 @@ public class WorkspaceService {
             for (MultipartFile file : files) {
                 Material material = new Material(UUID.randomUUID().toString(), safeName(file.getOriginalFilename()), file.getSize(), category, Instant.now());
                 added.add(material);
-                file.transferTo(root.resolve("uploads").resolve(material.id()));
+                file.transferTo(scope().root.resolve("uploads").resolve(material.id()));
             }
             List<Material> all = new ArrayList<>(added);
-            all.addAll(state.materials());
-            save(new State(List.copyOf(all), state.reports()));
+            all.addAll(scope().state.materials());
+            save(new State(List.copyOf(all), scope().state.reports()));
             return List.copyOf(added);
         } catch (IOException | RuntimeException failure) {
             for (Material material : added) {
-                try { Files.deleteIfExists(root.resolve("uploads").resolve(material.id())); }
+                try { Files.deleteIfExists(scope().root.resolve("uploads").resolve(material.id())); }
                 catch (IOException cleanup) { failure.addSuppressed(cleanup); }
             }
             throw failure;
@@ -79,10 +97,10 @@ public class WorkspaceService {
     }
     public synchronized void delete(String id) throws IOException {
         material(id);
-        if (state.reports().stream().anyMatch(r -> r.materialIds().contains(id)))
+        if (scope().state.reports().stream().anyMatch(r -> r.materialIds().contains(id)))
             throw new ResponseStatusException(HttpStatus.CONFLICT, "该资料已被报告任务引用，暂时无法删除");
-        save(new State(state.materials().stream().filter(m -> !m.id().equals(id)).toList(), state.reports()));
-        Files.deleteIfExists(root.resolve("uploads").resolve(id));
+        save(new State(scope().state.materials().stream().filter(m -> !m.id().equals(id)).toList(), scope().state.reports()));
+        Files.deleteIfExists(scope().root.resolve("uploads").resolve(id));
     }
     public synchronized ReportTask create(ReportInput input) throws IOException {
         catalog.validateModel(input.modelId());
@@ -93,12 +111,12 @@ public class WorkspaceService {
             input.school().trim(), input.year(), input.modelId(), input.templateId(), List.copyOf(new LinkedHashSet<>(input.materialIds())),
             template.chapters().stream().filter(input.chapters()::contains).toList(), Objects.requireNonNullElse(input.instructions(), ""), agent.initialStatus(), Instant.now(), agent.initialSteps(), agent.statusMessage(), input.customTopic());
         List<ReportTask> reports = new ArrayList<>(List.of(report));
-        reports.addAll(state.reports());
-        save(new State(state.materials(), List.copyOf(reports)));
+        reports.addAll(scope().state.reports());
+        save(new State(scope().state.materials(), List.copyOf(reports)));
         return report;
     }
     public synchronized ReportTask report(String id) {
-        return state.reports().stream().filter(r -> r.id().equals(id)).findFirst()
+        return scope().state.reports().stream().filter(r -> r.id().equals(id)).findFirst()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "报告任务不存在"));
     }
     public synchronized ReportTask run(String id) throws IOException {
@@ -141,7 +159,7 @@ public class WorkspaceService {
         if (Set.of("QUEUED", "RUNNING", "CANCELLING").contains(task.status()))
             throw new ResponseStatusException(HttpStatus.CONFLICT, "请先终止任务，等待终止完成后再删除记录");
         if (!Set.of("DRAFT", "AWAITING_AGENT").contains(task.status())) agent.delete(id);
-        save(new State(state.materials(), state.reports().stream().filter(r -> !r.id().equals(id)).toList()));
+        save(new State(scope().state.materials(), scope().state.reports().stream().filter(r -> !r.id().equals(id)).toList()));
     }
     public synchronized byte[] output(String id, String kind) throws IOException {
         if (!Set.of("report", "diagnosis").contains(kind)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "输出类型无效");
@@ -155,15 +173,16 @@ public class WorkspaceService {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "智能体返回了无效的任务状态");
         ReportTask after = new ReportTask(before.id(), before.title(), before.school(), before.year(), before.modelId(), before.templateId(),
             before.materialIds(), before.chapters(), before.instructions(), job.status(), before.createdAt(), job.steps(), job.message(), before.customTopic());
-        if (!after.equals(before)) save(new State(state.materials(), state.reports().stream().map(r -> r.id().equals(after.id()) ? after : r).toList()));
+        if (!after.equals(before)) save(new State(scope().state.materials(), scope().state.reports().stream().map(r -> r.id().equals(after.id()) ? after : r).toList()));
         return after;
     }
     private void save(State next) throws IOException {
+        Path root=scope().root;
         Path temporary = root.resolve("workspace.json.tmp");
         mapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), next);
         try { Files.move(temporary, root.resolve("workspace.json"), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
         catch (AtomicMoveNotSupportedException e) { Files.move(temporary, root.resolve("workspace.json"), StandardCopyOption.REPLACE_EXISTING); }
-        state = next;
+        scope().state = next;
     }
     private String safeName(String original) {
         if (original == null || original.isBlank()) throw new IllegalArgumentException("文件名不能为空");

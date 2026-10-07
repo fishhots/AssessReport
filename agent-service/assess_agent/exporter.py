@@ -7,20 +7,28 @@ from copy import deepcopy
 from math import ceil
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.section import WD_SECTION_START
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml import parse_xml
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor, Emu, Twips
 
 from .errors import AgentError
 from .schemas import JobRequest, SectionDraft
 from .settings import CHAPTERS, DIAGNOSIS_TITLES, REPORT_CONFIG, SERVICE_ROOT
-from .validation import subsection_paths, document_paths, template_coverage, subsection_aliases
-from .report_style import formal_text, visual_note, qualitative_lead, recommendation_paragraph
+from .validation import subsection_paths, document_paths, template_coverage, subsection_aliases, container_only_paths
+from .report_style import (formal_text, visual_note, qualitative_lead, recommendation_paragraph,
+                           core_heading_conclusions, without_heading_conclusion,
+                           chapter_introduction_paragraphs)
 from .table_layout import comparison_table_view, duplicate_statistic_table
+
+# Distribution tables whose rendered data table should be reduced to the leading
+# categories with a [具体信息, {year}届] header (see table_layout.distribution_table_view).
+_DISTRIBUTION_TABLE_IDS = {'table-1-1', 'table-1-2', 'table-1-3', 'table-1-4',
+                           'table-1-5', 'table-1-6', 'table-1-8', 'table-1-9'}
 
 
 def set_font(style, name: str, size: int):
@@ -136,6 +144,21 @@ def template_heading(document, text, chapter, path='', level=1, numbering_state=
                 numbering_state[key] = new_id
             num_properties.find(qn('w:numId')).set(qn('w:val'), str(numbering_state[key]))
         paragraph._p.replace(paragraph._p.pPr, properties)
+    if chapter == '核心发现' and path and level > 1:
+        # A custom style keeps the manual heading appearance without the built-in
+        # Heading 2/3 styles being collected by the TOC's \o switch. Body outline
+        # level also excludes it from \u when Word updates the whole directory.
+        name = f'Heading {level} Core'
+        if name not in document.styles:
+            style = document.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = document.styles[f'Heading {level}']
+            outline = OxmlElement('w:outlineLvl');outline.set(qn('w:val'), '9')
+            style.element.get_or_add_pPr().append(outline)
+        paragraph.style = document.styles[name]
+        properties = paragraph._p.get_or_add_pPr()
+        for old in list(properties.findall(qn('w:outlineLvl'))):properties.remove(old)
+        outline = OxmlElement('w:outlineLvl');outline.set(qn('w:val'), '9')
+        properties.append(outline)
     paragraph.paragraph_format.keep_with_next = True
     paragraph.paragraph_format.keep_together = True
     return paragraph
@@ -176,6 +199,19 @@ def add_contents(document, sections):
     if len(document.sections) == 1:
         document.add_section(WD_SECTION_START.NEW_PAGE)
     document.add_paragraph('目录',style='Title')
+    # Unnumbered chapter headings have only one tab before their page number.
+    # The template's early left tab catches it before the dotted right tab, so
+    # give TOC 1 one right-aligned stop at the original page-number position.
+    toc_style = next(s for s in document.styles if s.name.lower() == 'toc 1')
+    width = Emu(document.sections[-1].page_width-document.sections[-1].left_margin-
+                document.sections[-1].right_margin)
+    original_stops = [t.position for t in toc_style.paragraph_format.tab_stops
+                      if t.alignment == WD_TAB_ALIGNMENT.RIGHT]
+    right = min(max(original_stops, default=width), width)
+    toc_style.paragraph_format.tab_stops.clear_all()
+    toc_style.paragraph_format.tab_stops.add_tab_stop(right, WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+    toc_style.paragraph_format.left_indent = Twips(0)
+    toc_style.paragraph_format.first_line_indent = Twips(0)
     # A live TOC with a readable, clickable fallback, rather than invented page
     # numbers. Word updates the field from the actual Heading 1–3 layout.
     first=document.add_paragraph()
@@ -192,7 +228,9 @@ def add_contents(document, sections):
     end=OxmlElement('w:fldChar');end.set(qn('w:fldCharType'),'end');last.add_run()._r.append(end)
 
 
-def add_data_table(document, columns, rows, header_groups=None):
+def add_data_table(document, columns, rows, header_groups=None, template_id=''):
+    from .template_tables import table_template
+    reference = table_template(template_id)
     table = document.add_table(rows=1, cols=len(columns))
     table.style = "Table Grid"
     table.autofit = False
@@ -207,9 +245,10 @@ def add_data_table(document, columns, rows, header_groups=None):
     if len(columns)==3 and columns[0]=='职业类' and all('高频使用比例' in c for c in columns[1:]):
         weights=[1.5,3.0,3.0]
     width_cm = document.sections[-1].page_width.cm-document.sections[-1].left_margin.cm-document.sections[-1].right_margin.cm
+    if reference and len(reference['widths']) == len(columns):weights=reference['widths']
     widths=[width_cm*w/sum(weights) for w in weights]
     profile = json.loads((SERVICE_ROOT / 'config/template-profile.json').read_text(encoding='utf-8'))
-    original = profile['tableProperties'].get(str(len(columns)))
+    original = reference['tableProperties'] if reference else profile['tableProperties'].get(str(len(columns)))
     if original:
         table._tbl.replace(table._tbl.tblPr, parse_xml(original))
     cell_formats = profile['tableFormats'].get(str(len(columns)), next(iter(profile['tableFormats'].values())))
@@ -231,6 +270,8 @@ def add_data_table(document, columns, rows, header_groups=None):
         row._tr.get_or_add_trPr().append(prevent_split)
         for column_index, (cell, value, width) in enumerate(zip(row.cells, values, widths)):
             role = cell_formats[('header' if is_header else 'body')+('Label' if not column_index else 'Value')]
+            if not is_header and reference and len(reference['bodyFormats']) == len(columns):
+                role=reference['bodyFormats'][column_index]
             properties = parse_xml(role['tcPr'])
             for child in list(properties):
                 if child.tag in {qn('w:tcW'),qn('w:gridSpan'),qn('w:vMerge'),qn('w:hMerge')}:
@@ -239,7 +280,7 @@ def add_data_table(document, columns, rows, header_groups=None):
             cell.width = Cm(width)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             display=str(value)
-            if not is_header and numeric[column_index] and display not in ('—','-') and (header_groups or '%' in columns[column_index] or '％' in columns[column_index]):
+            if not is_header and numeric[column_index] and display not in ('—','-') and (reference or header_groups or '%' in columns[column_index] or '％' in columns[column_index]):
                 try:display=f'{float(display.rstrip("%％").replace(",","")):.2f}'
                 except ValueError:pass
             cell.text = display
@@ -282,8 +323,10 @@ def add_data_table(document, columns, rows, header_groups=None):
                 # average row. Do not apply that emphasis to every data row.
                 run.bold = is_header or str(values[0]) in ('本校平均','全校平均')
                 run.font.color.rgb=RGBColor(255,255,255) if is_header else RGBColor(0,0,0)
-                if len(columns)>=8:run.font.size=Pt(9)
-                elif not is_header and numeric[column_index]:run.font.size=Pt(10)
+                if len(columns)>=8:
+                    run.font.size=Pt(9)
+                elif not reference and not is_header and numeric[column_index]:
+                    run.font.size=Pt(10)
                 cs = run._r.get_or_add_rPr().find(qn('w:bCs'))
                 if cs is not None:cs.set(qn('w:val'),'1' if run.bold else '0')
             if not is_header:
@@ -308,6 +351,33 @@ def add_data_table(document, columns, rows, header_groups=None):
                     if base_r is not None:run._r.insert(0,deepcopy(base_r))
                     run.bold=True
                     run.font.color.rgb=RGBColor(255,255,255)
+    # Vertical merge of a repeated leading grouping label (学院名称/学院/专业/
+    # 学科门类/职业类…): rows sharing the same grouping value collapse into one
+    # merged cell instead of repeating the label on every row. Empty labels are
+    # never merged. Only the listed grouping columns trigger this behaviour so
+    # numeric tables are never touched.
+    _GROUPING_LABELS = {'学院名称', '学院', '专业', '专业名称', '学科门类', '学科', '职业类'}
+    merge_columns=reference['mergeColumns'] if reference else ([0] if not header_groups and columns and columns[0] in _GROUPING_LABELS else [])
+    for merge_column in merge_columns:
+        r = 0
+        while r < len(rows):
+            end = r
+            while (end + 1 < len(rows) and rows[end + 1][:merge_column+1] == rows[r][:merge_column+1]
+                   and rows[r][merge_column] not in ('','—')):
+                end += 1
+            if end > r:
+                source=table.cell(header_count+r,merge_column)
+                base_p=deepcopy(source.paragraphs[0]._p.pPr)
+                base_r=deepcopy(source.paragraphs[0].runs[0]._r.rPr)
+                merged = source.merge(table.cell(header_count + end, merge_column))
+                # python-docx concatenates all original text when merging. The
+                # grouping label must occur once, with its original formatting.
+                merged.text=str(rows[r][merge_column])
+                paragraph=merged.paragraphs[0]
+                if base_p is not None:paragraph._p.insert(0,base_p)
+                if base_r is not None:paragraph.runs[0]._r.insert(0,base_r)
+                merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            r = end + 1
     return table
 
 
@@ -321,6 +391,9 @@ def chart_dimensions(kind, width, height, available=15.3):
 
 
 def visual_caption(caption, data):
+    if data.get('pooledCohorts') and data.get('cohorts'):
+        caption=re.sub(r'[（(]\s*20\d{2}\s*届[、，,]\s*20\d{2}\s*届合并\s*[）)]',
+                       '（'+'、'.join(f'{y}届' for y in data['cohorts'])+'合并）',caption)
     if data.get('cohort') and data.get('pooledCohorts') is False:
         caption = re.sub(r'[（(]\s*20\d{2}\s*届[、，,]\s*20\d{2}\s*届合并\s*[）)]',
                          f"（{data['cohort']}届）", caption)
@@ -336,21 +409,22 @@ def add_visual(document, registry, visual, references):
         caption = document.add_paragraph(caption_text,style='Caption')
         caption.paragraph_format.keep_with_next = True
         caption.runs[0].bold = True
-        view=comparison_table_view(data)
+        view=comparison_table_view({**data,'reportYear':registry.year})
         for index,panel in enumerate(view.get('panels') or [view]):
             if index:
                 caption=document.add_paragraph('续'+caption_text,style='Caption')
                 caption.paragraph_format.keep_with_next=True
                 caption.runs[0].bold=True
-            if panel['headerGroups'] or data.get('templateId')=='table-4-2':
-                unit=document.add_paragraph('单位：%')
+            unit_text=panel.get('unit') or ('单位：%' if panel['headerGroups'] or data.get('templateId')=='table-4-2' else '')
+            if unit_text:
+                unit=document.add_paragraph(unit_text)
                 unit.alignment=WD_ALIGN_PARAGRAPH.RIGHT
                 unit.paragraph_format.first_line_indent=Cm(0)
                 unit.paragraph_format.line_spacing=1
                 unit.paragraph_format.space_after=Pt(2)
                 unit.paragraph_format.keep_with_next=True
                 unit.runs[0].font.size=Pt(9)
-            add_data_table(document,panel['columns'],panel['rows'],panel['headerGroups'])
+            add_data_table(document,panel['columns'],panel['rows'],panel['headerGroups'],panel.get('templateId',''))
     else:
         from PIL import Image
         for index, file in enumerate(asset["files"]):
@@ -442,6 +516,7 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
         return ""
 
     numbering_state = {}
+    expected_outline = {}
     for index, section in enumerate(sections):
         heading=template_heading(document,section.title,section.title,numbering_state=numbering_state)
         if index:
@@ -451,9 +526,18 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
         aliases=subsection_aliases(section)
         fixed_paths=subsection_paths(section.title)
         chapter_config=next((c for c in REPORT_CONFIG['chapters'] if c['title']==section.title), {})
+        introduction=chapter_config.get('introduction', '')
+        for introduction_paragraph in chapter_introduction_paragraphs(introduction):
+            document.add_paragraph(introduction_paragraph)
+        core_conclusions=core_heading_conclusions(section)
+        expected_outline[section.title]=[]
         recommendation_paths=set(chapter_config.get('recommendationPaths', []))
         labelled_recommendations=set()
         fallback=fixed_paths[0] if fixed_paths else ''
+        # In the reference report these second-level headings are containers:
+        # the first child metric heading follows immediately, without an
+        # overview paragraph in between.
+        nonleaf_paths=container_only_paths(section.title)
         from .visuals import ITEMS
         mixed=any(b.kind!='gap' for b in section.blocks) or bool(section.visuals or section.tables)
         occupied={b.subsection or fallback for b in section.blocks if b.kind!='gap' and formal_text(b.text)}
@@ -461,24 +545,38 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
         occupied.update(ITEMS.get(v.template_id,{}).get('subsection','') or fallback for v in section.visuals)
         def add_group(path):
             introduced = False
+            matched_blocks=[]
             for block in section.blocks:
                 assigned=aliases.get(block.subsection,block.subsection) or fallback
                 if assigned != path:continue
                 if block.kind=='gap':continue
+                if fixed_paths and path in nonleaf_paths:continue
+                matched_blocks.append(block)
+            # “本章小结” in the reference always presents analysis before the
+            # optional labelled recommendation, regardless of model order.
+            if fixed_paths and path == '本章小结':
+                if not any(block.kind in ('finding','inference') and formal_text(block.text)
+                           for block in matched_blocks):
+                    # Never publish standalone advice as a chapter summary.
+                    # Recovery builds analysis from verified chapter findings;
+                    # ungrounded legacy advice remains in the audit only.
+                    matched_blocks=[]
+                matched_blocks.sort(key=lambda block: block.kind == 'recommendation')
+            for block in matched_blocks:
                 text=re.sub(r'\{\$学校名称\}',request.school,block.text)
                 text=re.sub(r'\{\$届次\}',str(request.year),text)
                 text=formal_text(text)
                 if not text:continue
-                # The original report labels selected summary/action paragraphs.
-                # Extensions may request a label once per main theme.
                 label_scope=path if fixed_paths else path.split(' / ')[0]
                 show_label=(block.kind=='recommendation' and label_scope not in labelled_recommendations and
                             (path in recommendation_paths or (not fixed_paths and text.startswith('【建议】'))))
                 text=recommendation_paragraph(block,text,show_label)
+                if path in core_conclusions and block.kind in ('finding', 'inference'):
+                    text=without_heading_conclusion(text,core_conclusions[path],path.split(' / ')[-1])
                 if not text:continue
                 if show_label:labelled_recommendations.add(label_scope)
                 paragraph = document.add_paragraph()
-                lead, remainder = qualitative_lead(block, text) if not introduced else ('', text)
+                lead, remainder = qualitative_lead(block, text) if not introduced and path not in core_conclusions else ('', text)
                 if lead:
                     paragraph.add_run(lead).bold = True
                     paragraph.add_run(remainder+references(block.source_ids))
@@ -495,14 +593,48 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
                 if duplicate_statistic_table(data,attached):continue
                 caption=document.add_paragraph(data.title,style='Caption')
                 caption.runs[0].bold=True
-                add_data_table(document,data.columns,data.rows)
+                tid=getattr(data,'template_id',None)
+                if tid in _DISTRIBUTION_TABLE_IDS:
+                    view=comparison_table_view({'templateId':tid,'columns':data.columns,
+                                                 'rows':data.rows,
+                                                 'cohort':getattr(data,'cohort',None) or request.year,
+                                                 'type':'table'})
+                    if view and view.get('rows') is not None:
+                        add_data_table(document,view['columns'],view['rows'],view.get('headerGroups'))
+                    else:
+                        add_data_table(document,data.columns,data.rows)
+                else:
+                    add_data_table(document,data.columns,data.rows)
         if paths:
             if not fixed_paths:
                 add_group('')
             for group_path in paths:
-                group_heading=template_heading(document,heading_text(section.title,group_path),section.title,group_path,
-                                 level=min(4,len(group_path.split(' / '))+1),numbering_state=numbering_state)
+                group_text=heading_text(section.title,group_path)
+                if group_path in core_conclusions:group_text+='：'+core_conclusions[group_path]
+                expected_outline[section.title].append(group_text)
+                group_heading=template_heading(document,group_text,section.title,group_path,
+                                  level=min(4,len(group_path.split(' / '))+1),numbering_state=numbering_state)
+                if group_path in core_conclusions:
+                    color=group_heading.style.font.color.rgb or RGBColor.from_string('006699')
+                    for run in group_heading.runs:run.font.color.rgb=color
                 add_group(group_path)
+                # Keep a missing fixed table's header/position. Empty cells are
+                # presentation placeholders, never registered statistical facts.
+                if store.visuals:
+                    from .template_tables import table_template, reference_table_view
+                    for item in ITEMS.values():
+                        resource=store.visuals.coverage.get(item['id'],{})
+                        if (item['chapter']==section.title and item.get('subsection')==group_path and
+                                item['type']=='table' and resource.get('status')=='missing' and
+                                table_template(item['id'],request.year)):
+                            view=reference_table_view({'templateId':item['id'],'reportYear':request.year,'rows':[],'columns':[]})
+                            caption=document.add_paragraph(visual_caption(item['caption'],{'cohort':request.year,'pooledCohorts':False}),style='Caption')
+                            caption.paragraph_format.keep_with_next=True;caption.runs[0].bold=True
+                            if view['unit']:
+                                unit=document.add_paragraph(view['unit']);unit.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+                                unit.paragraph_format.keep_with_next=True;unit.runs[0].font.size=Pt(9)
+                            add_data_table(document,view['columns'],view['rows'],view['headerGroups'],item['id'])
+                            document.add_paragraph('注：—表示本次无可用同口径数据。')
                 if (fixed_paths and group_path not in occupied and
                         not any(p.startswith(group_path+' / ') for p in paths)):
                     # Preserve the title without repeating placeholder prose.
@@ -547,7 +679,7 @@ def export_document(request: JobRequest, sections: list[SectionDraft], store, pa
         elif chapter and paragraph.style.name.startswith('Heading '):
             actual_paths[chapter].append(paragraph.text)
     for section in sections:
-        if actual_paths[section.title] != [heading_text(section.title,p) for p in document_paths(section)]:
+        if actual_paths[section.title] != expected_outline[section.title]:
             raise AgentError('EXPORT_OUTLINE', 'Word 文档小节名称或顺序与模板不一致')
     temporary.replace(path)
     return {"filename": path.name, "size": path.stat().st_size, "sha256": sha256(path.read_bytes()).hexdigest(), 'layout': layout}

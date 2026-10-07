@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from .errors import AgentError
 from .schemas import Evidence, SectionDraft
 from .settings import SERVICE_ROOT
+from .cache_io import read_cache_json, write_cache_json
 from .store import write_json
 from .validation import validate_section
 
@@ -33,6 +34,26 @@ class RetryCache:
         self.previous = sorted((p for p in directory.parent.glob('attempt-*')
             if p.name.removeprefix('attempt-').isdigit() and int(p.name.removeprefix('attempt-')) < current),
             key=lambda p: int(p.name.removeprefix('attempt-')), reverse=True)
+        # Consolidate the latest compatible entry for each key before writing.
+        # Older attempts can then be removed after a terminal state, even if the
+        # new attempt failed before reaching a previously completed chapter.
+        carried = set()
+        for previous in self.previous:
+            for path in (previous / 'checkpoints').glob('*.json*'):
+                if path.suffix not in ('.json', '.gz'):
+                    continue
+                name = path.name.removesuffix('.gz')
+                if name in carried:
+                    continue
+                try:
+                    saved = read_cache_json(path)
+                    if saved['identity'] != identity:
+                        continue
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                write_cache_json(directory / 'checkpoints' / name, saved)
+                carried.add(name)
+        write_json(directory / 'recovery-consolidated.json', {'mode': 'writing'})
 
     @staticmethod
     def key(value):
@@ -42,7 +63,7 @@ class RetryCache:
         for directory in [self.directory, *self.previous]:
             path = directory / 'checkpoints' / f'{kind}-{key}.json'
             try:
-                saved = json.loads(path.read_text(encoding='utf-8'))
+                saved = read_cache_json(path)
                 if saved['identity'] == self.identity:
                     # Carry reused checkpoints forward so another interruption
                     # does not lose this progress. No provider request is made.
@@ -54,7 +75,7 @@ class RetryCache:
         return None
 
     def save(self, kind, key, value):
-        write_json(self.directory / 'checkpoints' / f'{kind}-{key}.json',
+        write_cache_json(self.directory / 'checkpoints' / f'{kind}-{key}.json',
                    {'identity': self.identity, 'value': value})
 
 

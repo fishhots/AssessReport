@@ -295,3 +295,23 @@ def test_all_missing_continuation_is_skipped_without_losing_missing_count(tmp_pa
     for file in charts.assets[rendered["assetId"]]["files"]:
         with Image.open(charts.directory/file["filename"]) as image:
             assert image.width < 2000
+
+
+@pytest.mark.parametrize('data,item',[
+    ({'type':'stacked_bar','labels':['课程内容','课程实践'],
+      'series':[{'name':'满意','values':[70,60]},{'name':'一般','values':[20,30]},{'name':'不满意','values':[10,10]}],
+      'unit':'%','benchmarks':[]}, ITEMS['figure-5-6']),
+    ({'type':'line','labels':['2024届','2025届'],
+      'series':[{'name':'毕业去向落实率','values':[80,85]}],
+      'unit':'%','benchmarks':[]}, {'id':'test-line'}),
+])
+def test_charts_do_not_embed_a_redundant_raw_data_grid(tmp_path,monkeypatch,data,item):
+    from matplotlib.axes import Axes
+    from assess_agent.chart_render import draw
+
+    def unexpected_table(*args,**kwargs):
+        raise AssertionError('图形下方不应重复附加原始数值表')
+
+    monkeypatch.setattr(Axes,'table',unexpected_table)
+    files=draw(data,item,tmp_path,'V-no-grid')
+    assert files and all((tmp_path/f['filename']).is_file() for f in files)

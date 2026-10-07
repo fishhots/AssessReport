@@ -17,6 +17,22 @@ AUDIT_CLAUSE = re.compile(
     r'(?:不含|不涉及|未进行).*(?:直接考核证据|认证达成度计算|显著性检验)')
 
 
+def chapter_introduction_paragraphs(text):
+    """Split the program-owned chapter opening like the reference report.
+
+    The reference uses a short context paragraph followed by a separate
+    paragraph beginning with “本章…”.  Keep a single paragraph when the
+    configured copy has no explicit scope sentence.
+    """
+    text = (text or '').strip()
+    if not text:
+        return []
+    match = re.search(r'(?<=。)(本章(?:围绕|从|重点|主要))', text)
+    if not match:
+        return [text]
+    return [part for part in (text[:match.start()].strip(), text[match.start():].strip()) if part]
+
+
 def formal_text(text):
     text = re.sub(r'\*\*(.*?)\*\*',r'\1',text,flags=re.S)
     labelled = bool(RECOMMENDATION_LABEL.match(text))
@@ -55,6 +71,45 @@ def qualitative_lead(block, text):
     if match and not re.search(r'[\d%％]', match.group(1)):
         return match.group(1).strip() + '。', text[match.end():]
     return '', text
+
+
+def core_heading_conclusions(section):
+    """Reuse verified editorial leads as dynamic core-finding heading text."""
+    if section.title != '核心发现':
+        return {}
+    from .validation import subsection_paths
+    paths = subsection_paths(section.title)
+    leaves = {p for p in paths if not any(child.startswith(p+' / ') for child in paths)}
+    conclusions = {}
+    for path in leaves:
+        blocks = [b for b in section.blocks if b.subsection == path and b.kind in ('finding', 'inference')]
+        # Prefer the explicit editorial summary. Legacy drafts may already have
+        # the same qualitative conclusion as the opening sentence of their text.
+        for block in sorted(blocks, key=lambda b: not bool(b.summary)):
+            topic = path.split(' / ')[-1]
+            text = formal_text(block.text)
+            if text.startswith(topic+'：') or text.startswith(topic+':'):
+                text = text[len(topic)+1:].lstrip()
+            lead, _ = qualitative_lead(block, text)
+            lead = lead.rstrip('。！？').strip()
+            if lead.startswith(topic+'：') or lead.startswith(topic+':'):
+                lead = lead[len(topic)+1:].strip()
+            if lead and lead != topic and len(lead) <= 60 and not re.search(r'[\d%％\n\r]', lead):
+                conclusions[path] = lead
+                break
+    return conclusions
+
+
+def without_heading_conclusion(text, conclusion, topic=''):
+    """Move a repeated opening sentence into the heading without losing detail."""
+    candidate = text
+    if topic and (text.startswith(topic+'：') or text.startswith(topic+':')):
+        candidate = text[len(topic)+1:].lstrip()
+    for ending in ('。', '！', '？', '：', ':'):
+        prefix = conclusion + ending
+        if candidate.startswith(prefix):
+            return candidate[len(prefix):].lstrip()
+    return '' if candidate == conclusion else text
 
 
 def visual_note(data):

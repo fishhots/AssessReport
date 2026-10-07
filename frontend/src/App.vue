@@ -3,9 +3,16 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from './components/Icon.vue'
 import DiagnosisFramework from './components/DiagnosisFramework.vue'
 import ModelSettingsDialog from './components/ModelSettingsDialog.vue'
+import AuthScreen from './components/AuthScreen.vue'
 import { diagnosisDimensions, plannedOutputs } from './diagnosisFramework'
-import { api } from './api'
-import type { Catalog, Category, Material, ModelConfig, ModelOption, ReportTask } from './types'
+import { api, ApiError, setSessionUser } from './api'
+import type { AuthUser, Catalog, Category, Material, ModelConfig, ModelOption, ReportTask } from './types'
+
+const currentUser = ref<AuthUser | null>(null)
+const checkingSession = ref(true)
+const sessionError = ref('')
+const signingOut = ref(false)
+const draftStorageKey = () => `assess-report-draft:${currentUser.value?.id}`
 
 type Page = 'workspace' | 'diagnosis' | 'materials' | 'reports' | 'models'
 const nav = [
@@ -20,7 +27,11 @@ const categories: { id: Category; label: string; icon: string }[] = [
   { id: 'SPEECH', label: '发展讲话', icon: 'MessageSquareText' },
   { id: 'REFERENCE', label: '参考报告', icon: 'BookOpen' },
 ]
-const page = ref<Page>('workspace')
+function pageFromLocation(): Page {
+  const id = window.location.hash.replace(/^#\/?/, '')
+  return nav.find((item) => item.id === id)?.id || 'workspace'
+}
+const page = ref<Page>(pageFromLocation())
 const mobileNav = ref(false)
 const catalog = ref<Catalog | null>(null)
 const materials = ref<Material[]>([])
@@ -30,6 +41,7 @@ const loadError = ref('')
 const uploadBusy = ref(false)
 const saving = ref(false)
 const running = ref(false)
+const refreshingReports = ref(false)
 const stoppingId = ref('')
 const deletingReport = ref(false)
 const deletedReportIds = new Set<string>()
@@ -38,6 +50,8 @@ const testingModel = ref('')
 const modelTestResults = ref<Record<string, string>>({})
 const editingModel = ref<ModelOption | null>(null)
 let pollTimer: ReturnType<typeof setTimeout>
+let reportRefreshPromise: Promise<void> | null = null
+let libraryDragDepth = 0
 const dragActive = ref(false)
 const category = ref<Category>('DATA')
 const filterCategory = ref('ALL')
@@ -70,6 +84,7 @@ const allChaptersSelected = computed(
     !!activeTemplate.value?.chapters.length && chapters.value.length === activeTemplate.value.chapters.length,
 )
 const activeModel = computed(() => catalog.value?.models.find((m) => m.id === modelId.value))
+const configuredModelCount = computed(() => catalog.value?.models.filter((m) => m.configured).length || 0)
 const selectedMaterials = computed(() => materials.value.filter((m) => selectedIds.value.includes(m.id)))
 const filteredMaterials = computed(() =>
   materials.value.filter(
@@ -91,7 +106,7 @@ const ready = computed(
     chapters.value.length > 0 &&
     !!activeTemplate.value &&
     (!customTopicEnabled.value || (!!customTopicTitle.value.trim() && !!customTopicRequirements.value.trim())) &&
-    !!activeModel.value,
+    !!activeModel.value?.configured,
 )
 const pageTitle = computed(() => nav.find((n) => n.id === page.value)?.label)
 const totalSize = computed(() => materials.value.reduce((sum, m) => sum + m.size, 0))
@@ -131,11 +146,33 @@ function notify(message: string, error = false) {
   toast.value = { message, error }
   toastTimer = setTimeout(() => (toast.value = null), 4500)
 }
-function navigate(id: Page) {
+function applyPage(id: Page) {
   page.value = id
   search.value = ''
   mobileNav.value = false
+  dragActive.value = false
+  libraryDragDepth = 0
   void nextTick(() => window.scrollTo(0, 0))
+}
+function navigate(id: Page) {
+  applyPage(id)
+  if (window.location.hash !== `#${id}`) window.location.hash = id
+}
+function onPageHashChange() {
+  const id = pageFromLocation()
+  if (page.value !== id) applyPage(id)
+}
+function startPreparing() {
+  helpOpen.value = false
+  navigate('workspace')
+}
+function selectModel(id: string) {
+  if (catalog.value?.models.some((model) => model.id === id && model.configured)) modelId.value = id
+}
+function ensureConfiguredModel() {
+  if (!activeModel.value?.configured) {
+    modelId.value = catalog.value?.models.find((model) => model.configured)?.id || ''
+  }
 }
 function toggleMaterial(id: string) {
   selectedIds.value = selectedIds.value.includes(id)
@@ -152,6 +189,8 @@ function toggleAllChapters() {
   chapters.value = allChaptersSelected.value ? [] : [...(activeTemplate.value?.chapters || [])]
 }
 async function load() {
+  const userId = currentUser.value?.id
+  if (!userId) return
   loading.value = true
   loadError.value = ''
   try {
@@ -160,11 +199,12 @@ async function load() {
       api.materials(),
       api.reports(),
     ])
+    if (currentUser.value?.id !== userId) return
     catalog.value = nextCatalog
     materials.value = nextMaterials
     reports.value = nextReports
     try {
-      const raw = localStorage.getItem('assess-report-draft')
+      const raw = localStorage.getItem(draftStorageKey())
       if (raw) {
         const draft = JSON.parse(raw)
         if (typeof draft.school === 'string') school.value = draft.school
@@ -184,16 +224,18 @@ async function load() {
     } catch {
       chapters.value = [...(activeTemplate.value?.chapters || [])]
     }
+    ensureConfiguredModel()
   } catch (e) {
-    loadError.value = e instanceof Error ? e.message : '无法连接服务'
+    if (currentUser.value?.id === userId) loadError.value = e instanceof Error ? e.message : '无法连接服务'
   } finally {
-    loading.value = false
+    if (currentUser.value?.id === userId) loading.value = false
   }
 }
 function saveDraft(showToast = true) {
+  if (!currentUser.value) return
   try {
     localStorage.setItem(
-      'assess-report-draft',
+      draftStorageKey(),
       JSON.stringify({
         school: school.value,
         year: year.value,
@@ -249,6 +291,23 @@ function onFiles(event: Event) {
 function onDrop(event: DragEvent) {
   void upload(Array.from(event.dataTransfer?.files || []))
 }
+function onLibraryDragEnter(event: DragEvent) {
+  if (materials.value.length || uploadBusy.value || !event.dataTransfer?.types.includes('Files')) return
+  libraryDragDepth += 1
+  dragActive.value = true
+}
+function onLibraryDragOver(event: DragEvent) {
+  if (event.dataTransfer) event.dataTransfer.dropEffect = uploadBusy.value || materials.value.length ? 'none' : 'copy'
+}
+function onLibraryDragLeave() {
+  libraryDragDepth = Math.max(0, libraryDragDepth - 1)
+  if (!libraryDragDepth) dragActive.value = false
+}
+function onLibraryDrop(event: DragEvent) {
+  libraryDragDepth = 0
+  dragActive.value = false
+  if (!materials.value.length) onDrop(event)
+}
 async function deleteMaterial() {
   if (!pendingDelete.value) return
   const id = pendingDelete.value.id
@@ -287,7 +346,8 @@ async function createReport() {
   }
 }
 function chooseModelFromSettings(id: string) {
-  modelId.value = id
+  if (!catalog.value?.models.some((model) => model.id === id && model.configured)) return
+  selectModel(id)
   navigate('workspace')
 }
 async function runReport() {
@@ -372,22 +432,47 @@ function openModelSettings(model: ModelOption) {
 function modelConfigSaved(config: ModelConfig) {
   const model = catalog.value?.models.find((item) => item.id === config.id)
   if (model) model.configured = config.configured
+  ensureConfiguredModel()
   delete modelTestResults.value[config.id]
 }
 function modelConfigTested(id: string, passed: boolean) {
   modelTestResults.value[id] = passed ? '接口测试通过' : '接口测试失败'
 }
-async function pollReports() {
-  try {
-    if (reports.value.some(isActiveTask)) {
-      reports.value = (await api.reports()).filter((r) => !deletedReportIds.has(r.id))
+async function updateReports() {
+  if (!reportRefreshPromise) {
+    const pending = api.reports().then((nextReports) => {
+      reports.value = nextReports.filter((r) => !deletedReportIds.has(r.id))
       if (activeReport.value)
         activeReport.value = reports.value.find((r) => r.id === activeReport.value?.id) || activeReport.value
-    }
+    }).finally(() => { if (reportRefreshPromise === pending) reportRefreshPromise = null })
+    reportRefreshPromise = pending
+  }
+  await reportRefreshPromise
+}
+async function refreshReportStatus() {
+  if (refreshingReports.value) return
+  refreshingReports.value = true
+  try {
+    await updateReports()
+    notify('任务状态已刷新')
+  } catch (e) {
+    notify(e instanceof Error ? e.message : '刷新任务状态失败，请重试', true)
+  } finally {
+    refreshingReports.value = false
+  }
+}
+watch(page, (id) => {
+  if (currentUser.value && id === 'reports' && !loading.value) void updateReports().catch(() => {})
+})
+async function pollReports() {
+  const userId = currentUser.value?.id
+  if (!userId) return
+  try {
+    if (page.value === 'reports' || reports.value.some(isActiveTask)) await updateReports()
   } catch {
     /* Keep existing progress until the next successful refresh. */
   }
-  pollTimer = setTimeout(pollReports, 4000)
+  if (currentUser.value?.id === userId) pollTimer = setTimeout(pollReports, 4000)
 }
 function closeDialogs() {
   activeReport.value = null
@@ -399,18 +484,90 @@ function showReportHistory() {
   activeReport.value = null
   navigate('reports')
 }
-onMounted(async () => {
+function clearWorkspaceState() {
+  clearTimeout(pollTimer)
+  clearTimeout(toastTimer)
+  mobileNav.value = false
+  dragActive.value = false
+  libraryDragDepth = 0
+  deletingReport.value = false
+  loading.value = true
+  catalog.value = null
+  materials.value = []
+  reports.value = []
+  selectedIds.value = []
+  chapters.value = []
+  modelId.value = ''
+  school.value = '北京信息科技大学'
+  year.value = 2025
+  instructions.value = ''
+  customTopicEnabled.value = false
+  customTopicTitle.value = ''
+  customTopicRequirements.value = ''
+  modelTestResults.value = {}
+  editingModel.value = null
+  deletedReportIds.clear()
+  reportRefreshPromise = null
+  uploadBusy.value = false
+  refreshingReports.value = false
+  saving.value = false
+  running.value = false
+  testingModel.value = ''
+  stoppingId.value = ''
+  downloading.value = ''
+  search.value = ''
+  filterCategory.value = 'ALL'
+  category.value = 'DATA'
+  toast.value = null
+  loadError.value = ''
+  closeDialogs()
+}
+async function onLogin(user: AuthUser) {
+  clearWorkspaceState()
+  currentUser.value = user
+  setSessionUser(user.id)
+  sessionError.value = ''
   await load()
-  pollTimer = setTimeout(pollReports, 4000)
+  if (currentUser.value?.id === user.id) pollTimer = setTimeout(pollReports, 4000)
+}
+function onSessionExpired() {
+  setSessionUser('')
+  currentUser.value = null
+  clearWorkspaceState()
+  sessionError.value = '登录已失效或账号已变更，请重新登录。'
+}
+async function logout() {
+  if (signingOut.value) return
+  signingOut.value = true
+  try {
+    await api.logout()
+    onSessionExpired()
+    sessionError.value = ''
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) onSessionExpired()
+    else notify(e instanceof Error ? e.message : '退出登录失败，请重试', true)
+  } finally { signingOut.value = false }
+}
+onMounted(async () => {
+  window.addEventListener('hashchange', onPageHashChange)
+  window.addEventListener('assess-session-expired', onSessionExpired)
+  try { await onLogin(await api.me()) }
+  catch (e) {
+    if (!(e instanceof ApiError && e.status === 401)) sessionError.value = '暂时无法连接登录服务，请稍后重试。'
+  } finally { checkingSession.value = false }
 })
 onUnmounted(() => {
+  window.removeEventListener('hashchange', onPageHashChange)
+  window.removeEventListener('assess-session-expired', onSessionExpired)
   clearTimeout(pollTimer)
   clearTimeout(toastTimer)
 })
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="checkingSession" class="auth-loading"><Icon name="LoaderCircle" class="spin" :size="28" /><p>正在恢复登录状态…</p></div>
+  <AuthScreen v-else-if="!currentUser" :session-error="sessionError" @logged-in="onLogin" />
+  <div v-else class="app-shell">
     <aside class="sidebar" :class="{ 'mobile-open': mobileNav }">
       <a class="brand" href="#" @click.prevent="navigate('workspace')"
         ><span class="brand-mark"><Icon name="GraduationCap" :size="25" /></span
@@ -436,8 +593,8 @@ onUnmounted(() => {
         <button @click="helpOpen = true">了解使用流程 <Icon name="ArrowUpRight" :size="16" /></button>
       </div>
       <div class="sidebar-bottom">
-        <div class="avatar">教</div>
-        <div><strong>教学质量工作空间</strong><span>教学质量评价与改进</span></div>
+        <div class="avatar">{{ currentUser.username.slice(0,1) }}</div>
+        <div class="sidebar-user"><strong>{{ currentUser.username }}</strong><span>{{ currentUser.account }}</span></div>
         <button class="icon-button" aria-label="使用帮助" @click="helpOpen = true">
           <Icon name="HelpCircle" :size="18" />
         </button>
@@ -452,13 +609,15 @@ onUnmounted(() => {
           ><span>工作空间</span><Icon name="ChevronRight" :size="14" /><strong>{{ pageTitle }}</strong>
         </div>
         <div class="topbar-actions">
+          <span class="topbar-username">{{ currentUser.username }}</span>
+          <button class="text-button" :disabled="signingOut" @click="logout"><Icon name="LogOut" :size="16" />{{ signingOut ? '正在退出…' : '退出登录' }}</button>
           <span class="connection"
             ><i :class="{ offline: loadError }"></i
             >{{ loadError ? '服务未连接' : loading ? '连接中' : '本地服务已连接' }}</span
           ><button class="icon-button" aria-label="刷新数据" @click="load">
             <Icon name="RefreshCw" :size="17" /></button
           ><span class="topbar-divider"></span>
-          <div class="avatar small">教</div>
+          <div class="avatar small">{{ currentUser.username.slice(0,1) }}</div>
         </div>
       </header>
       <main>
@@ -526,17 +685,17 @@ onUnmounted(() => {
             <div class="workflow-strip">
               <div class="workflow-item current">
                 <span>01</span>
-                <div><strong>上传校本资料</strong><small>汇集数据与背景信息</small></div>
+                <div><strong>第一步：上传并选择资料</strong><small>先选资料类型，再上传并勾选文件</small></div>
               </div>
               <Icon name="ChevronRight" :size="18" />
               <div class="workflow-item">
                 <span>02</span>
-                <div><strong>配置报告任务</strong><small>勾选章节与分析模型</small></div>
+                <div><strong>第二步：配置报告内容</strong><small>填写学校与届别，选择章节和已配置模型</small></div>
               </div>
               <Icon name="ChevronRight" :size="18" />
               <div class="workflow-item">
                 <span>03</span>
-                <div><strong>生成完整报告</strong><small>模板章节、个性化分析与主题报告</small></div>
+                <div><strong>第三步：生成并下载报告</strong><small>创建任务后开始生成，完成后下载 Word 报告</small></div>
               </div>
             </div>
             <div class="studio-grid">
@@ -546,8 +705,8 @@ onUnmounted(() => {
                     <div class="section-heading">
                       <span class="section-icon"><Icon name="FolderOpen" :size="19" /></span>
                       <div>
-                        <h3>准备报告资料</h3>
-                        <p>上传数据、发展讲话或参考报告，为分析提供依据</p>
+                        <h3>第一步：上传并选择资料</h3>
+                        <p>先选择下方资料类型，再上传文件；勾选本次报告使用的资料</p>
                       </div>
                     </div>
                     <span class="muted-badge">{{ selectedIds.length }} 份已选</span>
@@ -625,8 +784,8 @@ onUnmounted(() => {
                     <div class="section-heading">
                       <span class="section-icon"><Icon name="Settings2" :size="19" /></span>
                       <div>
-                        <h3>配置报告内容</h3>
-                        <p>填写学校与届别，勾选本次需要输出的报告章节</p>
+                        <h3>第二步：配置报告内容</h3>
+                        <p>填写学校与届别，勾选报告章节（默认全选），并在下方选择已配置的模型</p>
                       </div>
                     </div>
                   </div>
@@ -719,17 +878,21 @@ onUnmounted(() => {
                       <span class="section-icon"><Icon name="Sparkles" :size="19" /></span>
                       <div>
                         <h3>选择分析模型</h3>
-                        <p>选择本次报告使用的模型</p>
+                        <p>选择已配置的模型；未配置的模型请先填写密钥、模型名称和接口地址</p>
                       </div>
                     </div>
-                    <span class="muted-badge">{{ catalog.models.length }} 类模型</span>
+                    <span class="muted-badge">{{ configuredModelCount }} / {{ catalog.models.length }} 已配置</span>
                   </div>
                   <div class="model-grid">
                     <button
                       v-for="model in catalog.models"
                       :key="model.id"
-                      :class="['model-card', { selected: modelId === model.id }]"
-                      @click="modelId = model.id"
+                      :class="['model-card', { selected: model.configured && modelId === model.id,
+                        configured: model.configured, unconfigured: !model.configured }]"
+                      :disabled="!model.configured"
+                      :aria-pressed="model.configured && modelId === model.id"
+                      :aria-label="`${model.name}，${model.configured ? '已配置，可选择' : '未配置，请前往模型设置'}`"
+                      @click="selectModel(model.id)"
                     >
                       <span :class="['model-logo', model.accent]">{{
                         model.name === 'DeepSeek'
@@ -746,11 +909,16 @@ onUnmounted(() => {
                       }}</span
                       ><span
                         ><strong>{{ model.name }}</strong
-                        ><small>{{ model.provider }}</small></span
+                        ><small>{{ model.provider }}</small>
+                        <span class="model-config-status">{{ model.configured ? '已配置' : '未配置' }}</span></span
                       ><span class="radio-mark"
-                        ><Icon v-if="modelId === model.id" name="Check" :size="11"
+                        ><Icon v-if="model.configured && modelId === model.id" name="Check" :size="11"
                       /></span>
                     </button>
+                  </div>
+                  <div class="model-selection-footer">
+                    <span>{{ configuredModelCount ? '灰色模型尚未配置，暂不可选择。' : '请先配置至少一个模型，再创建报告任务。' }}</span>
+                    <button class="text-button" @click="navigate('models')">前往配置模型<Icon name="ArrowUpRight" :size="15" /></button>
                   </div>
                 </section>
               </div>
@@ -785,7 +953,7 @@ onUnmounted(() => {
                     </div>
                     <div>
                       <dt>分析模型</dt>
-                      <dd>{{ activeModel?.name }}</dd>
+                      <dd>{{ activeModel?.configured ? activeModel.name : '待选择已配置模型' }}</dd>
                     </div>
                     <div>
                       <dt>目标格式</dt>
@@ -807,6 +975,7 @@ onUnmounted(() => {
                         chapters.length ? '报告范围已配置' : '请至少选择一个章节'
                       }}</span
                     >
+                    <span :class="{ incomplete: !activeModel?.configured }"><Icon :name="activeModel?.configured ? 'CheckCircle2' : 'Circle'" :size="15" />{{ activeModel?.configured ? '分析模型已配置' : '请先配置并选择模型' }}</span>
                   </div>
                   <button
                     class="button primary create-button"
@@ -883,13 +1052,6 @@ onUnmounted(() => {
                 <h1>资料库</h1>
                 <p>集中管理校本数据与背景资料，让每次分析都有可靠依据。</p>
               </div>
-              <button class="button primary" :disabled="uploadBusy" @click="fileInput?.click()">
-                <Icon
-                  :name="uploadBusy ? 'LoaderCircle' : 'Plus'"
-                  :class="{ spin: uploadBusy }"
-                  :size="18"
-                />上传资料
-              </button>
             </div>
             <div class="stat-grid">
               <div class="stat-card">
@@ -912,9 +1074,16 @@ onUnmounted(() => {
                   <select v-model="filterCategory" aria-label="筛选资料类别">
                     <option value="ALL">全部资料</option>
                     <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.label }}</option></select
-                  ><select v-model="category" aria-label="上传资料类别">
-                    <option v-for="c in categories" :key="c.id" :value="c.id">上传为：{{ c.label }}</option>
-                  </select>
+                  >
+                  <label class="upload-type-select">
+                    <select v-model="category" aria-label="上传资料类别">
+                      <option v-for="c in categories" :key="c.id" :value="c.id">上传为：{{ c.label }}</option>
+                    </select>
+                    <Icon name="ChevronDown" :size="16" />
+                  </label>
+                  <button v-if="materials.length" class="button primary library-upload-button" :disabled="uploadBusy" @click="fileInput?.click()">
+                    <Icon :name="uploadBusy ? 'LoaderCircle' : 'Plus'" :class="{ spin: uploadBusy }" :size="18" />{{ uploadBusy ? '正在上传…' : '上传资料' }}
+                  </button>
                 </div>
                 <label class="search-field"
                   ><Icon name="Search" :size="17" /><input v-model="search" placeholder="搜索资料名称"
@@ -976,23 +1145,28 @@ onUnmounted(() => {
                   </tbody>
                 </table>
               </div>
-              <div v-if="!filteredMaterials.length" class="empty-state">
-                <span><Icon name="FolderOpen" :size="32" /></span>
-                <h3>{{ materials.length ? '没有找到匹配的资料' : '从第一份校本资料开始' }}</h3>
+              <div v-if="!filteredMaterials.length" class="empty-state"
+                :class="{ 'library-drop-zone': !materials.length, dragging: !materials.length && dragActive, busy: uploadBusy }"
+                :aria-busy="uploadBusy" aria-label="上传资料区域"
+                @dragenter.prevent="onLibraryDragEnter" @dragover.prevent="onLibraryDragOver"
+                @dragleave.prevent="onLibraryDragLeave" @drop.prevent="onLibraryDrop">
+                <span><Icon :name="uploadBusy ? 'LoaderCircle' : materials.length ? 'FolderOpen' : 'UploadCloud'" :class="{ spin: uploadBusy }" :size="32" /></span>
+                <h3>{{ materials.length ? '没有找到匹配的资料' : uploadBusy ? '正在上传并保存资料…' : dragActive ? '松开文件，开始上传' : '拖拽文件到这里，或点击上传' }}</h3>
                 <p>
                   {{
                     materials.length
                       ? '试试其他关键词或资料类别。'
-                      : '上传毕业生调研数据、学校发展讲话或参考报告。'
+                      : '支持 Excel、CSV、PDF、Word、TXT，单个文件不超过 50 MB。'
                   }}
                 </p>
+                <p v-if="!materials.length" class="library-upload-category">将保存为「{{ categoryName(category) }}」</p>
                 <button
                   v-if="!materials.length"
-                  class="button"
+                  class="button primary"
                   :disabled="uploadBusy"
                   @click="fileInput?.click()"
                 >
-                  上传资料<Icon name="ArrowRight" :size="16" />
+                  <Icon :name="uploadBusy ? 'LoaderCircle' : 'Plus'" :class="{ spin: uploadBusy }" :size="18" />{{ uploadBusy ? '正在上传…' : '上传资料' }}
                 </button>
               </div>
               <div class="list-footer">
@@ -1012,9 +1186,14 @@ onUnmounted(() => {
                 <h1>报告记录</h1>
                 <p>每次生成一份培养质量评价报告，包含个性化分析和已填写的主题章节。</p>
               </div>
-              <button class="button primary" @click="navigate('workspace')">
-                <Icon name="Plus" :size="17" />新建报告
-              </button>
+              <div class="page-heading-actions">
+                <button class="button" :disabled="refreshingReports || loading" @click="refreshReportStatus">
+                  <Icon name="RefreshCw" :class="{ spin: refreshingReports }" :size="17" />{{ refreshingReports ? '正在刷新…' : '刷新状态' }}
+                </button>
+                <button class="button primary" @click="navigate('workspace')">
+                  <Icon name="Plus" :size="17" />新建报告
+                </button>
+              </div>
             </div>
             <section class="panel library-panel">
               <div class="list-toolbar">
@@ -1087,7 +1266,7 @@ onUnmounted(() => {
                 </button>
               </div>
               <div class="list-footer">
-                共 {{ filteredReports.length }} 个报告任务<span>任务配置已保存在本地服务</span>
+                共 {{ filteredReports.length }} 个报告任务<span>每隔约 4 秒自动刷新任务状态</span>
               </div>
             </section>
           </template>
@@ -1131,7 +1310,7 @@ onUnmounted(() => {
                 >
                   {{ model.configured ? '编辑配置' : '配置模型' }}<Icon name="SlidersHorizontal" :size="16" />
                 </button>
-                <button class="button" @click.stop="chooseModelFromSettings(model.id)">
+                <button class="button" :disabled="!model.configured" @click.stop="chooseModelFromSettings(model.id)">
                   在工作台选择<Icon name="ArrowRight" :size="16" />
                 </button>
               </article>
@@ -1285,25 +1464,25 @@ onUnmounted(() => {
           <span>01</span>
           <div>
             <h4>上传并选择资料</h4>
-            <p>将调研数据、学校讲话、参考报告分类上传。可在资料库选择本次使用的文件。</p>
+            <p>在工作台先选择资料类型，再上传调研数据、发展讲话或参考报告，并勾选本次使用的文件。已有资料也可从资料库选择。</p>
           </div>
         </div>
         <div class="help-step">
           <span>02</span>
           <div>
-            <h4>配置并保存报告任务</h4>
-            <p>填写学校与届别，勾选报告章节（默认全选），查看三个诊断维度，选择模型并补充分析要求。</p>
+            <h4>配置报告内容与模型</h4>
+            <p>填写学校与届别，勾选报告章节（默认全选），按需添加主题章节，并选择已配置的模型。未配置的模型可前往“模型设置”填写接口信息。</p>
           </div>
         </div>
         <div class="help-step">
           <span>03</span>
           <div>
             <h4>生成并下载报告</h4>
-            <p>在任务详情中开始生成并查看进度；完成后下载包含新增章节的完整报告。</p>
+            <p>点击“创建报告任务”，在任务详情中点击“开始生成”并查看进度；完成后下载包含个性化分析和已选主题章节的完整报告。</p>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="button primary" @click="helpOpen = false">
+          <button class="button primary" @click="startPreparing">
             开始准备<Icon name="ArrowRight" :size="16" />
           </button>
         </div>

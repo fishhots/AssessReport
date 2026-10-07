@@ -227,6 +227,8 @@ class SectionWriter:
             "fixedOutline": chapter.get('outline',[]),
             "templateTopics": chapter.get('topics', []),
             "recommendationPaths": chapter.get('recommendationPaths', []),
+            "parentBodyPaths": chapter.get('parentBodyPaths', []),
+            "chapterIntroduction": chapter.get('introduction', ''),
             "verifiedStatistics": statistics,
             "tables": [{"materialId": t.material_id, "sheet": t.sheet,
                         "columns": ([c for c in t.columns if any(k in c for k in tokens)][:30] if len(t.columns)>60 else t.columns),
@@ -289,6 +291,7 @@ class SectionWriter:
         allowed_tool_names = {"SectionDraft", *(tool.name for tool in evidence_tools)}
         # Reserve enough graph steps for tool results and bounded format repairs.
         max_section_calls = MAX_RESEARCH_ROUNDS + MAX_FORMAT_REPAIRS + 1
+        summary_structure_repair = any('本章小结必须先有' in issue for issue in (issues or []))
         final_prompt = (
             "取证阶段已结束。现在只提交一次 SectionDraft 工具调用，完成当前章节；不得继续调用取证或图表工具。"
             "依据已经取得的证据写作，无法确认的指标写为 gap，不得编造数值或引用。"
@@ -297,8 +300,13 @@ class SectionWriter:
             "避免重复抄录大量图表数据；title 必须逐字保持当前标题。"
             "blocks 的 kind 只能是 finding、inference、recommendation、gap；source_ids 为证据ID数组。"
         )
-        final_prompt += ("本次只修订输入草稿列出的段落和表格。blocks、tables 数量和顺序必须与输入草稿一致，不扩写其他段落或图表。保留每个待修订段落的原主题；不得替换为本章其他主题或重复已通过段落，无依据的原主题改为定性说明或具体gap。"
-                         if issues else "按 fixedOutline 和 templateTopics 小节成文，每个有证据的主题1–3段，使用 subsection 标明原小节路径。复杂章节最多96段。不能用题目介绍、工具过程或反复资料缺口代替实际统计分析。")
+        if issues:
+            final_prompt += ("本次只修订输入草稿列出的段落和表格。除校验明确指出本章小结缺少分析时须新增1个有引用的 finding/inference 分析段放在返回blocks开头、subsection为本章小结，原段落保持原顺序并保留recommendation外，"
+                             "blocks、tables 数量和顺序必须与输入草稿一致，不扩写其他段落或图表。保留每个待修订段落的原主题；不得替换为本章其他主题或重复已通过段落，无依据的原主题改为定性说明或具体gap。")
+        else:
+            final_prompt += ("按 fixedOutline 和 templateTopics 小节成文，每个有证据的主题1–3段，使用 subsection 标明原小节路径。"
+                             "本章小结先写2–3段结果分析，再按需写recommendation；除parentBodyPaths列出的人工版例外外，二级父标题后直接进入下级指标标题，不给父标题单独写正文。"
+                             "复杂章节最多96段。不能用题目介绍、工具过程或反复资料缺口代替实际统计分析。")
         if focus_paths:
             final_prompt += f'本次只补写focusPaths，每项最多2段，每段最多280字，blocks最多{len(focus_paths)*2}段，tables与visuals必须为空；subsection逐字使用focusPaths中的路径。'
         limits=context['writingLimits']
@@ -316,10 +324,13 @@ class SectionWriter:
             # Constrain the tool schema itself, so a changed revision scope is
             # repaired inside the bounded model loop before merging content.
             output_schema = create_model("SectionDraft", __base__=SectionDraft,
-                blocks=(list[ContentBlock], Field(min_length=block_count, max_length=block_count)),
+                blocks=(list[ContentBlock], Field(min_length=block_count + (1 if summary_structure_repair else 0),
+                    max_length=block_count + (1 if summary_structure_repair else 0))),
                 tables=(list[ContentTable], Field(min_length=table_count, max_length=table_count)
                         if table_count else Field(default_factory=list, max_length=0)))
-            final_prompt += f"本次 blocks 必须恰好 {block_count} 个，tables 必须恰好 {table_count} 个。"
+            final_prompt += (f"本次 blocks 必须恰好 {block_count + 1} 个，仅为本章小结补1个分析段放在返回blocks开头；tables 必须恰好 {table_count} 个。"
+                             if summary_structure_repair else
+                             f"本次 blocks 必须恰好 {block_count} 个，tables 必须恰好 {table_count} 个。")
 
         def repair_format(error):
             nonlocal format_repairs, finalizing
@@ -464,13 +475,17 @@ class SectionWriter:
     def thinking_write(self, title, system, context, issues, draft):
         """Analyze verified data, then compose JSON in fresh tool-free requests."""
         context = {**context, 'revisionIssues': issues or [], 'revisionDraft': draft}
+        summary_structure_repair = any('本章小结必须先有' in issue for issue in (issues or []))
         if issues and draft:
             context = {**context, 'fixedOutline': [], 'templateTopics': [], 'visualRequirements': [],
                        'verifiedStatistics': [], 'verifiedSectionSummaries': [],
                        'chapterRequirements': '仅修订revisionDraft的内容，不扩写整章。'}
-            system += (f"\n本次是局部修订，忽略整章主题覆盖要求。只返回revisionDraft中的{len(draft['blocks'])}个blocks和"
-                       f"{len(draft.get('tables', []))}个tables，保持顺序、原主题与subsection路径。"
+            system += (f"\n本次是局部修订，忽略整章主题覆盖要求。只返回{len(draft['blocks']) + int(summary_structure_repair)}个blocks和"
+                       f"{len(draft.get('tables', []))}个tables，原段落保持顺序、原主题与subsection路径。"
                        '没有fixedOutline不表示清空原subsection；不得补写其他主题或整章小结。')
+            if summary_structure_repair:
+                system += ('唯一例外：须为本章小结新增1个有引用的finding/inference分析段，subsection为本章小结，'
+                           '置于返回blocks开头，其余原段落保持顺序并保留recommendation。')
         # Expand source coverage using the same registered evidence search implementation.
         evidence = {item['id']: item for item in context['initialEvidence']}
         # Topic-specific packets preserve every supported metric. Broad searches
@@ -496,8 +511,9 @@ class SectionWriter:
             tables=(list[ContentTable], Field(default_factory=list, max_length=0 if focus else limits['maxTables'])),
             visuals=(list[ContentVisual],Field(default_factory=list,max_length=0 if focus else 60)))
         if issues and draft:
+            repaired_block_count = len(draft['blocks']) + int(summary_structure_repair)
             output_schema = create_model('SectionDraft', __base__=SectionDraft,
-                blocks=(list[ContentBlock], Field(min_length=len(draft['blocks']), max_length=len(draft['blocks']))),
+                blocks=(list[ContentBlock], Field(min_length=repaired_block_count, max_length=repaired_block_count)),
                 tables=(list[ContentTable], Field(default_factory=list, min_length=len(draft.get('tables', [])), max_length=len(draft.get('tables', [])))))
         analysis_prompt = (SERVICE_ROOT / 'prompts/analysis.md').read_text(encoding='utf-8')
         try:
@@ -546,7 +562,7 @@ class SectionWriter:
                                 fields.append({'field':'.'.join(str(k) if isinstance(k,int) or k in allowed else 'field' for k in item['loc']),
                                                'type':item['type']})
                         self.call_trace[-1]['formatErrors'] = fields or [{'field':'scope','type':'invalid'}]
-                        counts = (f"blocks恰好{len(draft['blocks'])}段、tables恰好{len(draft.get('tables', []))}项。" if issues and draft
+                        counts = (f"blocks恰好{repaired_block_count}段、tables恰好{len(draft.get('tables', []))}项。" if issues and draft
                                   else f'blocks最多{len(focus)*2}段，每段最多280字，subsection必须属于focusPaths，tables与visuals必须为空。' if focus
                                   else f'blocks最多{limits["maxBlocks"]}段，每段最多{limits["maxParagraphCharacters"]}字，tables最多{limits["maxTables"]}项。')
                         feedback = [HumanMessage(content='上次未返回合规JSON。需修正字段：'+json.dumps(fields,ensure_ascii=False)+

@@ -34,26 +34,28 @@ def test_distribution_view_reduces_body_rows_without_renormalizing_or_mutating_d
     data={'templateId':'table-1-6','columns':['类别','人数','比例（%）'],
           'rows':[[str(i),str(n),str(n)] for i,n in enumerate([40,20,10,8,7,6,5,4])]}
     before=deepcopy(data); view=comparison_table_view(data)
-    assert len(view['rows'])==5 and [r[1] for r in view['rows']]==['40','20','10','8','7']
+    assert len(view['rows'])==5 and [r[-1] for r in view['rows']]==['40.00','20.00','10.00','8.00','7.00']
+    assert all(r[1:4]==['—']*3 for r in view['rows'])
     assert data==before
 
 
 def test_saved_frequency_export_pivots_all_options_and_keeps_zero_choices():
     data={'templateId':'table-5-5','columns':['职业类','工作任务','使用频率','比例（%）','有效回答人数'],
           'rows':[['信息类','开发','总是','20','5'],['信息类','开发','经常','80','5']]}
-    assert comparison_table_view(data)['rows']==[['信息类','开发','20','80','0.00','0.00']]
+    assert comparison_table_view(data)['rows']==[['信息类','开发','20.00','80.00','0.00','0.00']]
     data['rows'][1][4]='6'
-    assert comparison_table_view(data)['rows']==data['rows']
+    assert comparison_table_view(data)['rows']==[['信息类','开发',*['—']*4]]
 
 
-def test_many_activity_metrics_split_into_readable_matrices_without_losing_columns():
+def test_activity_metrics_rank_independently_in_reference_discipline_columns():
     data={'templateId':'table-5-2','columns':['学科门类','评价项目或主要需求','比例（%）','有效回答人数'],
         'rows':[['工学','活动'+str(i),str(i),'10'] for i in range(10)]}
     view=comparison_table_view(data)
-    assert len(view['panels'])==2
-    assert [c for p in view['panels'] for c in p['columns'][1:]]==['活动'+str(i) for i in range(10)]
-    assert all(len(p['columns'])<=7 and p['rows'][0][0]=='工学' for p in view['panels'])
-    assert [v for p in view['panels'] for v in p['rows'][0][1:]]==[str(i) for i in range(10)]
+    assert view['columns']==['选项','工学','选项','管理学','选项','理学','选项','文学']
+    assert [r[0] for r in view['rows']]==['活动'+str(i) for i in range(9,3,-1)]
+    assert [r[1] for r in view['rows']]==[f'{i:.2f}' for i in range(9,3,-1)]
+    assert all(r[2:]==['—']*6 for r in view['rows'])
+    assert len(data['rows'])==10
 
 
 def test_full_ai_demand_matrix_includes_every_option_and_school_average(tmp_path):
@@ -91,9 +93,8 @@ def test_practice_activity_table_binds_to_activity_satisfaction_not_practice_con
     registry=VisualRegistry(store,tmp_path,2025,CHAPTERS);store.visuals=registry;registry.plan()
     data=registry.datasets[registry.coverage['table-5-2']['datasetId']]
     view=comparison_table_view(data)
-    assert set(view['columns'][1:])=={'毕业论文/设计','课程实验'}
-    row=next(r for r in view['rows'] if r[0]=='工学')
-    assert {float(x) for x in row[1:]}=={0,100}
+    assert [(r[0],r[1]) for r in view['rows']]==[('毕业论文/设计','100.00'),('课程实验','0.00')]
+    assert all(r[2:]==['—']*6 for r in view['rows'])
 
 
 def test_textbook_table_shows_full_response_distribution_in_reference_order(tmp_path):

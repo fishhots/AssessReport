@@ -13,7 +13,7 @@ def salvage_section(draft: SectionDraft, title: str, store, year: int, hint: str
     placeholder = ContentBlock(kind="gap", text="校验占位")
     for block in draft.blocks:
         candidate = SectionDraft(title=title, blocks=[block])
-        if not validate_section(candidate, title, store, year):
+        if not validate_section(candidate, title, store, year, review_structure=False):
             blocks.append(block)
     for table in draft.tables:
         candidate = SectionDraft(title=title, blocks=[placeholder], tables=[table])

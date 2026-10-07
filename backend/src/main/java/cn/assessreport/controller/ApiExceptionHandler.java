@@ -9,6 +9,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Map;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -20,6 +21,8 @@ public class ApiExceptionHandler {
     ResponseEntity<?> badInput(IllegalArgumentException e) { return error(HttpStatus.BAD_REQUEST, e.getMessage()); }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ResponseEntity<?> validation(MethodArgumentNotValidException e, HttpServletRequest request) {
+        if (request.getRequestURI().startsWith("/api/auth/"))
+            return error(HttpStatus.BAD_REQUEST,"请完整填写信息：账号为3至64位字母、数字、点、下划线或短横线，注册密码为8至128位");
         return error(HttpStatus.BAD_REQUEST, request.getRequestURI().startsWith("/api/models/")
             ? "请检查模型名称、密钥、接口地址和额外参数" : "请完整填写学校、年份、模型和资料，并至少选择一个报告章节");
     }
@@ -33,5 +36,7 @@ public class ApiExceptionHandler {
     ResponseEntity<?> status(ResponseStatusException e) { return ResponseEntity.status(e.getStatusCode()).body(Map.of("message", e.getReason() == null ? "请求失败" : e.getReason())); }
     @ExceptionHandler(IOException.class)
     ResponseEntity<?> storage(IOException e) { log.error("Workspace storage operation failed", e); return error(HttpStatus.INTERNAL_SERVER_ERROR, "资料保存失败，请检查服务存储后重试"); }
+    @ExceptionHandler(UncheckedIOException.class)
+    ResponseEntity<?> scopedStorage(UncheckedIOException e) { return storage(e.getCause()); }
     private ResponseEntity<?> error(HttpStatus status, String message) { return ResponseEntity.status(status).body(Map.of("message", message)); }
 }

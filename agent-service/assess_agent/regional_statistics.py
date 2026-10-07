@@ -58,8 +58,9 @@ def plan_regions(registry, table, rows, location_index, industry_index, career_i
             if label:
                 groups[label].append(province or '原始地点尚不能分类')
         output = []
+        groups['本校平均']=[province or '原始地点尚不能分类' for _,province,_ in located]
         for major, values in sorted(groups.items()):
             if len(values) >= 5:
-                output.append([major, '；'.join(f'{p}（{percentage(n,len(values)):g}%）' for p,n in Counter(values).most_common(3))])
-        register(registry, 'table-7-12', table, output, ['专业', '主要地区就业比例'],
+                output.extend([[major,p,str(percentage(n,len(values))),str(len(values))] for p,n in Counter(values).most_common()])
+        register(registry, 'table-7-12', table, output, ['专业名称', '主要就业省份','比例（%）','有效回答人数'],
             f'{registry.year}届就业样本；按上传资料标注的一流专业分组，以各专业工作所在地有效回答为分母，列前三地区；少于5人不展示。')

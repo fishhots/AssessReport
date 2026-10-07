@@ -8,6 +8,7 @@ import traceback
 from pathlib import Path
 from threading import Lock
 from uuid import UUID
+from dataclasses import dataclass
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
@@ -27,30 +28,70 @@ from .settings import Settings
 from .store import JobStore
 from .workflow import run_workflow
 from .export_resume import export_snapshot_directory
+from .cache_management import cleanup_terminal_task, cleanup_completed_jobs
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WorkspaceRuntime:
+    settings: Settings
+    jobs: JobStore
+    model_configs: ModelConfigStore
 
 
 def create_app(settings: Settings | None = None, model=None) -> FastAPI:
     settings = settings or Settings()
     jobs = JobStore(settings.data_root)
     model_configs = ModelConfigStore(settings.data_root)
+    legacy_runtime = WorkspaceRuntime(settings, jobs, model_configs)
+    runtimes, runtime_lock = {}, Lock()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="report-agent")
     futures, future_lock = {}, Lock()
 
     @asynccontextmanager
     async def lifespan(app):
         jobs.recover_interrupted()
+        cleanup_completed_jobs(settings, jobs)
+        for directory in (settings.data_root / 'users').glob('*'):
+            if directory.is_dir():
+                try:
+                    if str(UUID(directory.name)) == directory.name:
+                        scoped_jobs = JobStore(directory)
+                        scoped_jobs.recover_interrupted()
+                        cleanup_completed_jobs(settings.model_copy(update={'data_root': directory}), scoped_jobs)
+                except ValueError:
+                    continue
         yield
         executor.shutdown(wait=True)
 
     app = FastAPI(title="教学质量报告智能体服务", version="0.1.0", lifespan=lifespan)
     app.state.jobs, app.state.settings = jobs, settings
+    app.state.runtimes = runtimes
 
     def authorize(x_agent_token: str = Header(default="")):
         expected = settings.service_token.get_secret_value()
         if expected and not hmac.compare_digest(x_agent_token, expected):
             raise AgentError("UNAUTHORIZED", "智能体服务认证失败", 401)
+
+    def tenant_runtime(x_workspace_user: str = Header(default=""), _=Depends(authorize)):
+        # User IDs are supplied by the authenticated backend, never taken from
+        # a browser parameter. Keep the internal legacy namespace recoverable.
+        if not x_workspace_user:
+            return legacy_runtime
+        try:
+            user_id = str(UUID(x_workspace_user))
+            if user_id != x_workspace_user:
+                raise ValueError()
+        except ValueError:
+            raise AgentError('UNAUTHORIZED', '用户工作空间标识无效', 401) from None
+        with runtime_lock:
+            if user_id not in runtimes:
+                scoped = settings.model_copy(update={
+                    'data_root': settings.data_root / 'users' / user_id,
+                    'upload_root': settings.upload_root.parent / 'users' / user_id / 'uploads'})
+                runtimes[user_id] = WorkspaceRuntime(scoped, JobStore(scoped.data_root), ModelConfigStore(scoped.data_root))
+            return runtimes[user_id]
 
     @app.exception_handler(AgentError)
     async def handle_error(request: Request, error: AgentError):
@@ -62,13 +103,14 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
         return JSONResponse(status_code=422, content={"code": "MODEL_CONFIG" if is_config else "INVALID_REQUEST",
             "message": "请检查模型名称、密钥、接口地址和额外参数" if is_config else "任务参数不符合约定，请检查学校、年份、章节和资料 ID"})
 
-    def preflight(request: JobRequest):
+    def preflight(request: JobRequest, settings: Settings):
         if model is None:
             validate_provider(settings, request.model_id)
         for material in request.materials:
             source_path(settings, material)
 
-    def execute(row):
+    def execute(row, runtime: WorkspaceRuntime):
+        settings, jobs = runtime.settings, runtime.jobs
         task_id, attempt = row["id"], row["attempt"]
         try:
             jobs.ensure_active(task_id, attempt)
@@ -91,10 +133,12 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
             # Record diagnostic locations, never raw exception messages or data.
             logger.error("Task %s attempt %s failed: WORKFLOW_ERROR type=%s frames=%s",
                          task_id, attempt, type(error).__name__, frames)
+        finally:
+            cleanup_terminal_task(settings, jobs, task_id, attempt)
 
-    def enqueue(row):
-        key = (row["id"], row["attempt"])
-        future = executor.submit(execute, row)
+    def enqueue(row, runtime: WorkspaceRuntime):
+        key = (str(runtime.settings.data_root), row["id"], row["attempt"])
+        future = executor.submit(execute, row, runtime)
         with future_lock:
             futures[key] = future
         def completed(_):
@@ -107,19 +151,20 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
         return {"status": "UP", "framework": "langchain", "version": "0.1.0"}
 
     @app.get("/models", dependencies=[Depends(authorize)])
-    def models():
-        return provider_status(settings)
+    def models(runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return provider_status(runtime.settings)
 
     @app.get("/models/{provider}/config", dependencies=[Depends(authorize)])
-    def model_config(provider: str, channel: str | None = None):
-        return model_configs.public(provider, channel)
+    def model_config(provider: str, channel: str | None = None, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return runtime.model_configs.public(provider, channel)
 
     @app.put("/models/{provider}/config", dependencies=[Depends(authorize)])
-    def save_model_config(provider: str, config: ModelConfigInput):
-        return model_configs.save(provider, config)
+    def save_model_config(provider: str, config: ModelConfigInput, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return runtime.model_configs.save(provider, config)
 
     @app.post("/models/{provider}/test", dependencies=[Depends(authorize)])
-    def test_model(provider: str):
+    def test_model(provider: str, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        settings = runtime.settings
         stage = "configuration"
         try:
             client, metadata = build_model(settings.model_copy(update={"max_output_tokens": 512, "model_timeout": min(settings.model_timeout, 30)}), provider, 0, 'test')
@@ -185,43 +230,46 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
             raise failure from error
 
     @app.post("/jobs", status_code=202, dependencies=[Depends(authorize)])
-    def submit(request: JobRequest):
-        preflight(request)
-        row, created = jobs.create(request)
+    def submit(request: JobRequest, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        preflight(request, runtime.settings)
+        row, created = runtime.jobs.create(request)
         if created:
-            enqueue(row)
-        return jobs.view(row)
+            enqueue(row, runtime)
+        return runtime.jobs.view(row)
 
     @app.get("/jobs", dependencies=[Depends(authorize)])
-    def list_jobs():
-        return jobs.list()
+    def list_jobs(runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return runtime.jobs.list()
 
     @app.get("/jobs/{task_id}", dependencies=[Depends(authorize)])
-    def job(task_id: UUID):
-        return jobs.view(jobs.get(str(task_id)))
+    def job(task_id: UUID, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return runtime.jobs.view(runtime.jobs.get(str(task_id)))
 
     @app.post("/jobs/{task_id}/retry", status_code=202, dependencies=[Depends(authorize)])
-    def retry(task_id: UUID):
+    def retry(task_id: UUID, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        settings, jobs = runtime.settings, runtime.jobs
         existing = jobs.get(str(task_id))
         request = JobRequest.model_validate_json(existing['request'])
         export_only = export_snapshot_directory(request, settings.jobs_root(), existing['attempt'] + 1) is not None
         if not export_only:
-            preflight(request)
+            preflight(request, settings)
         row = jobs.retry(str(task_id), export_only=export_only)
-        enqueue(row)
+        enqueue(row, runtime)
         return jobs.view(row)
 
     @app.post("/jobs/{task_id}/cancel", dependencies=[Depends(authorize)])
-    def cancel(task_id: UUID):
+    def cancel(task_id: UUID, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        jobs = runtime.jobs
         row = jobs.cancel(str(task_id))
         with future_lock:
-            future = futures.get((str(task_id), row["attempt"]))
+            future = futures.get((str(runtime.settings.data_root), str(task_id), row["attempt"]))
         if future:
             future.cancel()
         return jobs.view(row)
 
     @app.delete("/jobs/{task_id}", status_code=204, dependencies=[Depends(authorize)])
-    def delete_job(task_id: UUID):
+    def delete_job(task_id: UUID, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        settings, jobs = runtime.settings, runtime.jobs
         root = settings.jobs_root().resolve()
         directory = (root / str(task_id)).resolve()
         if directory.parent != root or directory.name != str(task_id):
@@ -235,7 +283,8 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
         return Response(status_code=204)
 
     @app.get("/jobs/{task_id}/artifacts/{kind}", dependencies=[Depends(authorize)])
-    def artifact(task_id: UUID, kind: str):
+    def artifact(task_id: UUID, kind: str, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        settings, jobs = runtime.settings, runtime.jobs
         if kind not in ("report", "diagnosis"):
             raise AgentError("ARTIFACT_KIND", "输出类型无效", 404)
         row = jobs.get(str(task_id))

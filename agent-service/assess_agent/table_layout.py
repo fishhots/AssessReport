@@ -28,7 +28,14 @@ def ai_frequency_summary(tasks):
 
 
 def distribution_table_view(data):
-    """Main-body distributions show the leading categories, retaining raw data."""
+    """Main-body distributions show the leading categories, retaining raw data.
+
+    The header becomes [具体信息, {year}届] where the year column holds the
+    percentage of all valid answers for that cohort. Multi-year comparison is
+    supported when ``data`` carries ``multiYear`` = {year: {category: pct}}; one
+    extra column per other cohort is appended (value looked up by category,
+    '—' when absent) so the table reads as yearly share side by side.
+    """
     from .quantitative_review import parsed_number
     key=data.get('templateId')
     titles={'table-1-1':'省份','table-1-2':'城市','table-1-3':'行业类','table-1-4':'职业类',
@@ -39,6 +46,7 @@ def distribution_table_view(data):
     if len(indices)!=1 or not rows:return None
     i=indices[0]
     if any(len(r)!=len(columns) or parsed_number(r[i]) is None for r in rows):return None
+    year=str(data.get('cohort') or '2025')
     ranked=sorted(rows,key=lambda r:(-parsed_number(r[i]),r[0]))
     selected=ranked[:5]
     if len(ranked)>5:
@@ -47,7 +55,17 @@ def distribution_table_view(data):
     note='列示比例最高的前五项，排名并列时一并列示' if len(selected)>5 else '列示比例最高的前五项'
     if len(ranked)>len(selected) and parsed_number(ranked[len(selected)][i])==parsed_number(selected[-1][i]):
         note+='；并列项按名称排序选取'
-    return {'columns':[titles[key],'比例（%）'],'rows':[[r[0],r[i]] for r in selected],
+    out_columns=[titles[key],f'{year}届']
+    out_rows=[[r[0],r[i]] for r in selected]
+    # Forward-compatible yearly columns: append one per other cohort when the
+    # caller supplies aligned per-category percentages.
+    multi_year=data.get('multiYear')
+    if isinstance(multi_year,dict):
+        for yr,by_category in sorted(((y,c) for y,c in multi_year.items() if str(y)!=year)):
+            out_columns.append(f'{yr}届')
+            for row in out_rows:
+                row.append(str(by_category.get(row[0],'—')))
+    return {'columns':out_columns,'rows':out_rows,
             'headerGroups':None,'note':note if len(rows)>len(selected) else ''}
 
 
@@ -82,6 +100,9 @@ PRACTICE = [
 
 
 def comparison_table_view(data):
+    from .template_tables import reference_table_view
+    view = reference_table_view(data)
+    if view is not None:return view
     key = data.get('templateId')
     original = {'columns':data.get('columns', []), 'rows':data.get('rows', []), 'headerGroups':None}
     summarized=distribution_table_view(data) or legacy_frequency_view(data)
@@ -166,6 +187,7 @@ def duplicate_statistic_table(table, datasets):
     from .quantitative_review import parsed_number
     if not table.rows or not table.source_ids:
         return False
+    if reference_statistic_excerpt(table,datasets):return True
     for data in datasets:
         view=comparison_table_view(data)
         # Exact copies stay duplicates even if two computations used different
@@ -185,4 +207,75 @@ def duplicate_statistic_table(table, datasets):
         facts = {(row[0],row[1],parsed_number(row[2])) for row in data.get('rows',[]) if len(row)>=4 and parsed_number(row[2]) is not None}
         if facts and all((row[0],row[1],parsed_number(row[2])) in facts for row in table.rows):
             return True
+    return False
+
+
+def reference_statistic_excerpt(table,datasets):
+    """Keep the reference tables instead of redundant model-made restatements.
+
+    Match explicit table IDs, exact distribution pairs, or the combined major
+    metric table already represented by the separate reference annual tables.
+    Narrative course/action matrices are outside these rules.
+    """
+    import re
+    from .template_tables import table_template, normalized
+    from .quantitative_review import parsed_number
+    reference={d.get('templateId'):d for d in datasets if d.get('type')=='table' and table_template(d.get('templateId',''))}
+    labels=2 if len(table.columns)>1 and table.columns[1] in ('专业','专业名称','工作任务','主要工作任务') else 1
+    numeric_body=bool(table.rows) and all(
+        len(row)>labels and all(parsed_number(str(v)) is not None or v in ('—','-','－','') for v in row[labels:])
+        for row in table.rows)
+    for chapter,number in re.findall(r'表\s*(\d+)\s*[-－—]\s*(\d+)',table.title):
+        if numeric_body and f'table-{chapter}-{number}' in reference:return True
+    # A model-created raw value grid under a chart is a duplicate presentation,
+    # including multi-series stacked bars such as figure 5-6.
+    def metric_name(text):
+        return re.sub(r'\((?:%|％|元|人|分)\)$','',normalized(text))
+    for data in datasets:
+        series=data.get('series',[])
+        if data.get('type')=='table' or not series or len(table.columns)!=len(series)+1:
+            continue
+        series_by_name={metric_name(s.get('name','')):s for s in series}
+        headers=[metric_name(c) for c in table.columns[1:]]
+        if len(series_by_name)!=len(series) or set(headers)!=set(series_by_name):
+            continue
+        labels=data.get('labels',[])
+        facts={(str(label),name):parsed_number(str(value))
+               for name,s in series_by_name.items()
+               for label,value in zip(labels,s.get('values',[]))}
+        if table.rows and all(len(row)==len(table.columns) and row[0] in labels and
+                              all(parsed_number(str(row[i])) is not None and
+                                  parsed_number(str(row[i]))==facts.get((row[0],headers[i-1]))
+                                  for i in range(1,len(row))) for row in table.rows):
+            return True
+    if len(table.columns)==2 and ('比例' in table.columns[1] or '占比' in table.columns[1]):
+        for key,data in reference.items():
+            if not key.startswith('table-1-'):continue
+            ci=next((i for i,c in enumerate(data.get('columns',[])) if '比例' in c or '占比' in c),None)
+            if ci is None:continue
+            facts={(r[0],parsed_number(str(r[ci]))) for r in data.get('rows',[]) if len(r)>ci}
+            if facts and all(parsed_number(r[1]) is not None and (r[0],parsed_number(r[1])) in facts for r in table.rows):return True
+    if len(table.columns)==2 and numeric_body:
+        for data in datasets:
+            if data.get('type')=='table' or not re.match(r'^figure-(?:1|5|6|7)-',data.get('templateId','')):continue
+            if len(data.get('series',[]))!=1:continue
+            series=data['series'][0]
+            header=metric_name(table.columns[1])
+            units=re.findall(r'\((%|％|元|人|分)\)$',normalized(table.columns[1]))
+            if units and units[0].replace('％','%')!=data.get('unit','%'):continue
+            if header not in ('比例','占比') and header!=metric_name(series.get('name','')):continue
+            if header in ('比例','占比'):
+                from .visuals import ITEMS
+                caption=re.sub(r'^图\s*\d+-\d+\s*','',ITEMS.get(data['templateId'],{}).get('caption',''))
+                if caption and normalized(caption) not in normalized(table.title):continue
+            facts={(label,parsed_number(str(value))) for label,value in zip(data.get('labels',[]),series.get('values',[])) if value is not None}
+            if len(data.get('benchmarks',[]))==1 and data['benchmarks'][0] is not None:
+                facts.add(('本校平均',parsed_number(str(data['benchmarks'][0]))))
+            if facts and all((row[0],parsed_number(row[1])) in facts for row in table.rows):return True
+    if len(table.columns)>=3 and table.columns[0] in ('学院','学院名称') and table.columns[1] in ('专业','专业名称'):
+        metric_tables={'毕业去向落实率':'table-7-1','专业相关度':'table-7-2','月收入':'table-7-3',
+                       '就业满意度':'table-7-4','教学满意度':'table-7-8'}
+        metrics=[re.sub(r'\((?:%|％|元)\)$','',normalized(c)).replace('工作与专业相关度','专业相关度') for c in table.columns[2:]]
+        if all(metric in metric_tables and metric_tables[metric] in reference for metric in metrics):
+            return all(all(parsed_number(str(v)) is not None or v in ('—','-','－','') for v in row[2:]) for row in table.rows)
     return False

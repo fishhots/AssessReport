@@ -1,4 +1,5 @@
 import re
+import json
 from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -137,6 +138,37 @@ def test_content_revision_counts_are_constrained_and_repaired_in_model_loop(tmp_
     result = writer.write(CHAPTERS[1], "就业", issues=["本次修订两个段落"], draft=draft)
     assert len(result.blocks) == 2 and not result.tables
     assert model.rounds == 2 and model.required_blocks == 2
+
+
+def test_summary_repair_schema_allows_exactly_one_new_analysis_block(tmp_path):
+    writer,model=make_writer(tmp_path)
+    draft={'title':CHAPTERS[1],'blocks':[{'kind':'recommendation','subsection':'本章小结',
+        'text':'完善就业指导。'}],'tables':[]}
+    result=writer.write(CHAPTERS[1],'就业',issues=['第 1 段 本章小结必须先有分析段'],draft=draft)
+    assert len(result.blocks)==2 and model.required_blocks==2 and model.rounds==1
+
+
+def test_thinking_summary_repair_adds_analysis_without_expanding_other_content(tmp_path):
+    writer,_=make_writer(tmp_path)
+    source_id=writer.evidence.search('就业')[0]['id']
+    draft={'title':CHAPTERS[1],'blocks':[{'kind':'recommendation','subsection':'本章小结',
+        'text':'完善就业指导。'}],'tables':[]}
+    class Recorder:
+        def __init__(self,reply):self.reply,self.requests=reply,[]
+        def invoke(self,messages):
+            self.requests.append(messages)
+            return AIMessage(content=self.reply,
+                usage_metadata={'input_tokens':10,'output_tokens':20,'total_tokens':30})
+    writer.analysis_model=Recorder('根据已有就业结果概括本章。')
+    composer=Recorder(json.dumps({'title':CHAPTERS[1],'blocks':[
+        {'kind':'finding','subsection':'本章小结','text':'就业人数80人。','source_ids':[source_id]},
+        draft['blocks'][0]]},ensure_ascii=False))
+    writer.model=composer
+    result=writer.write(CHAPTERS[1],'就业',issues=['第 1 段 本章小结必须先有分析段'],draft=draft)
+    assert len(result.blocks)==2 and [b.kind for b in result.blocks]==['finding','recommendation']
+    schema=json.loads(composer.requests[0][-1].content.split('\n',1)[1])
+    assert schema['properties']['blocks']['minItems']==schema['properties']['blocks']['maxItems']==2
+    assert len(composer.requests)==1
 
 
 def test_reference_ids_and_figure_numbers_do_not_become_statistical_values(tmp_path):

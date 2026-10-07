@@ -28,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class AgentIntegrationTest {
+class AgentIntegrationTest extends AuthenticatedApiTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Map<String, Map<String, Object>> JOBS = new ConcurrentHashMap<>();
     private static final AtomicInteger SUBMISSIONS = new AtomicInteger();
@@ -36,6 +36,7 @@ class AgentIntegrationTest {
     private static final HttpServer SERVER;
     private static final Path STORAGE;
     private static volatile Map<?, ?> lastRequest;
+    private static volatile String lastWorkspaceUser;
     private static final Map<String, Map<String, Object>> MODEL_CONFIGS = new ConcurrentHashMap<>();
     private static volatile Map<?, ?> lastModelInput;
     private static volatile String lastModelQuery;
@@ -48,6 +49,7 @@ class AgentIntegrationTest {
                 byte[] bytes;
                 int status = 200;
                 String path = exchange.getRequestURI().getPath();
+                lastWorkspaceUser = exchange.getRequestHeaders().getFirst("X-Workspace-User");
                 if (!"integration-token".equals(exchange.getRequestHeaders().getFirst("X-Agent-Token"))) {
                     status = 401; bytes = JSON.writeValueAsBytes(Map.of("code", "UNAUTHORIZED"));
                 } else if (path.equals("/models")) {
@@ -116,11 +118,12 @@ class AgentIntegrationTest {
         registry.add("app.agent.token", () -> "integration-token");
     }
     @AfterAll static void stopServer() { SERVER.stop(0); }
-    @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     @Autowired WorkspaceService workspace;
     @Autowired cn.assessreport.agent.AgentGateway gateway;
     @Autowired cn.assessreport.service.CatalogService catalog;
+
+    private WorkspaceService ownWorkspace() { users.set(testUser); return workspace; }
 
     private String createTask() throws Exception {
         var upload = mvc.perform(multipart("/api/materials").file(new MockMultipartFile("files", "test.csv", "text/csv", "指标,人数\n就业,80\n".getBytes(StandardCharsets.UTF_8))).param("category", "DATA"))
@@ -136,6 +139,7 @@ class AgentIntegrationTest {
         mvc.perform(get("/api/catalog")).andExpect(jsonPath("$.agentConnected").value(true)).andExpect(jsonPath("$.models[0].configured").value(true));
         mvc.perform(get("/api/reports/" + id + "/outputs/report")).andExpect(status().isConflict());
         mvc.perform(post("/api/reports/" + id + "/run")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("QUEUED"));
+        assertEquals(testUser.id(), lastWorkspaceUser);
         int submitted = SUBMISSIONS.get();
         mvc.perform(post("/api/reports/" + id + "/run")).andExpect(status().isOk());
         assertEquals(submitted, SUBMISSIONS.get());
@@ -153,7 +157,7 @@ class AgentIntegrationTest {
         }
         mvc.perform(get("/api/reports/" + id + "/outputs/unknown")).andExpect(status().isNotFound());
         mvc.perform(post("/api/reports/unknown/run")).andExpect(status().isNotFound());
-        assertEquals("SUCCEEDED", workspace.report(id).status());
+        assertEquals("SUCCEEDED", ownWorkspace().report(id).status());
     }
     @Test void rejectedSubmissionPreservesDraftAndSanitizesErrors() throws Exception {
         String id = createTask(); REJECT.set(true);
@@ -161,12 +165,12 @@ class AgentIntegrationTest {
             var response = mvc.perform(post("/api/reports/" + id + "/run")).andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.message").value("所选模型尚未配置，请在模型设置中填写配置信息")).andReturn().getResponse().getContentAsString();
             assertFalse(response.contains("private-key"));
-            assertEquals("DRAFT", workspace.report(id).status());
+            assertEquals("DRAFT", ownWorkspace().report(id).status());
         } finally { REJECT.set(false); }
     }
     @Test void cancelRetryAndDeletePreserveUploadedMaterials() throws Exception {
         String id = createTask();
-        String materialId = workspace.report(id).materialIds().get(0);
+        String materialId = ownWorkspace().report(id).materialIds().get(0);
         mvc.perform(post("/api/reports/" + id + "/run")).andExpect(jsonPath("$.status").value("QUEUED"));
         mvc.perform(delete("/api/reports/" + id)).andExpect(status().isConflict());
         mvc.perform(post("/api/reports/" + id + "/cancel")).andExpect(jsonPath("$.status").value("CANCELLED"));
@@ -178,9 +182,9 @@ class AgentIntegrationTest {
         mvc.perform(delete("/api/reports/" + id)).andExpect(status().isNoContent());
         mvc.perform(get("/api/reports/" + id)).andExpect(status().isNotFound());
         assertFalse(JOBS.containsKey(id));
-        assertTrue(Files.exists(workspace.filePath(materialId)));
-        assertNotNull(workspace.material(materialId));
-        var reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, gateway);
+        assertTrue(Files.exists(ownWorkspace().filePath(materialId)));
+        assertNotNull(ownWorkspace().material(materialId));
+        var reloaded = new WorkspaceService(STORAGE.toString(), mapper, catalog, gateway, users);
         assertThrows(org.springframework.web.server.ResponseStatusException.class, () -> reloaded.report(id));
         assertNotNull(reloaded.material(materialId));
     }
@@ -287,7 +291,7 @@ class AgentIntegrationTest {
         assertEquals(topic, lastRequest.get("customTopic"));
         JOBS.put(id, job(id, "FAILED"));
         mvc.perform(post("/api/reports/" + id + "/run")).andExpect(status().isOk());
-        assertEquals(topic, workspace.report(id).customTopic() == null ? null :
-            Map.of("title", workspace.report(id).customTopic().title(), "requirements", workspace.report(id).customTopic().requirements()));
+        assertEquals(topic, ownWorkspace().report(id).customTopic() == null ? null :
+            Map.of("title", ownWorkspace().report(id).customTopic().title(), "requirements", ownWorkspace().report(id).customTopic().requirements()));
     }
 }

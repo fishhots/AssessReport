@@ -9,6 +9,7 @@ from assess_agent.checkpoints import (RetryCache, candidate_payload, restore_can
     section_key, workflow_identity)
 from assess_agent.coverage_recovery import recover_coverage
 from assess_agent.errors import AgentError
+from assess_agent.cache_management import cleanup_terminal_task
 from assess_agent.evidence import EvidenceStore
 from assess_agent.models import SectionWriter
 from assess_agent.parsers import parse_job
@@ -51,6 +52,7 @@ def test_resume_keeps_main_composition_and_first_repair(tmp_path, monkeypatch):
     with pytest.raises(AgentError) as failure:
         run_workflow(request, settings, jobs, 1, model=ToolCallingTestModel())
     jobs.fail(str(request.task_id), 1, failure.value)
+    cleanup_terminal_task(settings, jobs, str(request.task_id), 1)
     jobs.retry(str(request.task_id))
     result = run_workflow(request, settings, jobs, 2, model=ToolCallingTestModel())
     assert [c[0] for c in calls] == ['compose', 'repair', 'repair', 'repair']

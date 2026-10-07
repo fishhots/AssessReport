@@ -137,7 +137,12 @@ def test_native_metric_headings_and_table_cell_formats(tmp_path):
         for path in subsection_paths(chapter['title']):
             pattern = profile['headingPatterns'][chapter['title']+'|'+path]
             p = template_heading(document,path.split(' / ')[-1],chapter['title'],path)
-            assert p.style.name==f"Heading {pattern['level']}"
+            base_style = f"Heading {pattern['level']}"
+            if chapter['title'] == '核心发现':
+                assert p.style.name == base_style+' Core'
+                assert p.style.base_style.name == base_style
+            else:
+                assert p.style.name == base_style
             assert p.paragraph_format.keep_with_next is True
     table = add_data_table(document,['名称','结果'],[['示例指标','80']])
     assert table.rows[0].cells[0]._tc.tcPr.find(qn('w:shd')).get(qn('w:fill'))=='006699'

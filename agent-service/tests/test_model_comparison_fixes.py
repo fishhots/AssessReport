@@ -118,9 +118,12 @@ def test_course_summary_is_based_on_course_records_and_declared_membership(tmp_p
     rows += [['2025','软件工程','少量课程','0']]*2
     store,_=survey_store(['届次','一流专业显示名称','课程名称','课程是否满足工作或学习要求（1表示满足，0表示不满足）'],rows)
     store.visuals=VisualRegistry(store,tmp_path/'visuals',2025,[CHAPTERS[7]]);store.visuals.plan()
-    data=store.visuals.datasets[store.visuals.coverage['table-7-9']['datasetId']]
-    assert len(data['rows'])==1 and '系统设计（100%' in data['rows'][0][1]
-    assert '少量课程' not in str(data['rows']) and '记录' in data['basis']
+    assert store.visuals.coverage['table-7-9']['status']=='missing'
+    # Unscoped course rankings remain usable evidence, never replace the
+    # reference's two-population importance/satisfaction comparison.
+    details=[json.loads(e.text) for e in store.corpus.evidence if e.computed and 'course_task_details' in e.text]
+    assert len(details)==1 and '系统设计（100%' in details[0]['rows'][0][1]
+    assert '少量课程' not in str(details[0]['rows']) and '记录' in details[0]['basis']
 
 
 def test_filtered_service_expectations_exclude_other_branches(tmp_path):
@@ -161,7 +164,7 @@ def test_major_metric_join_uses_faculty_and_excludes_reference_and_pooled(tmp_pa
     store.visuals=VisualRegistry(store,tmp_path/'visuals',2025,[CHAPTERS[7]])
     store.visuals.plan()
     data=store.visuals.datasets[store.visuals.coverage['table-7-1']['datasetId']]
-    assert data['rows']==[['甲学院','软件工程','90']]
+    assert data['rows']==[['软件工程','90']]
     assert data['validSamples'] is None
     statistic=store.read(data['binding']['questionEvidenceId'])
     assert any(store.read(k).computed for k in statistic.parent_ids)

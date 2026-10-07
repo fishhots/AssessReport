@@ -11,6 +11,7 @@ from .errors import AgentError
 from .evidence import EvidenceStore
 from .schemas import Corpus, SectionDraft
 from .store import write_json
+from .cache_io import cache_path, read_cache_json
 from .validation import validate_section
 from .visuals import VisualRegistry
 
@@ -36,9 +37,10 @@ def export_snapshot_directory(request, jobs_root, before_attempt):
 def save_export_checkpoint(request, directory, sections, evidence, metadata):
     files=(*SNAPSHOT_FILES,*(name for name in OPTIONAL_SNAPSHOT_FILES if (directory/name).is_file()))
     write_json(directory / 'export-checkpoint.json', {
-        'version': 1, 'requestHash': digest(request.model_dump(mode='json')),
+        'version': 2, 'requestHash': digest(request.model_dump(mode='json')),
         'sections': sections, 'metadata': metadata, 'gapNotes': evidence.content_gap_notes,
-        'files': {name: sha256((directory / name).read_bytes()).hexdigest() for name in files}})
+        'files': {cache_path(directory / name).name: sha256(cache_path(directory / name).read_bytes()).hexdigest()
+                  for name in files}})
 
 
 def load_export_snapshot(request, directory):
@@ -46,11 +48,19 @@ def load_export_snapshot(request, directory):
         checkpoint = directory / 'export-checkpoint.json'
         if checkpoint.is_file():
             saved = json.loads(checkpoint.read_text(encoding='utf-8'))
-            if saved['version'] != 1 or saved['requestHash'] != digest(request.model_dump(mode='json')):
+            if saved['version'] not in (1, 2) or saved['requestHash'] != digest(request.model_dump(mode='json')):
                 raise ValueError('snapshot scope')
-            if any(name not in (*SNAPSHOT_FILES,*OPTIONAL_SNAPSHOT_FILES) for name in saved['files']):raise ValueError('snapshot files')
-            for name in (*SNAPSHOT_FILES,*(n for n in OPTIONAL_SNAPSHOT_FILES if n in saved['files'])):
-                if sha256((directory / name).read_bytes()).hexdigest() != saved['files'][name]:
+            allowed = {*SNAPSHOT_FILES, *OPTIONAL_SNAPSHOT_FILES}
+            if saved['version'] == 2:
+                allowed |= {name + '.gz' for name in allowed}
+            if any(name not in allowed for name in saved['files']):
+                raise ValueError('snapshot files')
+            for name in SNAPSHOT_FILES:
+                actual = cache_path(directory / name).name
+                if actual not in saved['files']:
+                    raise ValueError('snapshot missing')
+            for name, checksum in saved['files'].items():
+                if sha256((directory / name).read_bytes()).hexdigest() != checksum:
                     raise ValueError('snapshot changed')
         else:
             stage = json.loads((directory / 'stage-5.json').read_text(encoding='utf-8'))
@@ -63,8 +73,10 @@ def load_export_snapshot(request, directory):
                 return json.loads(file.read_text(encoding='utf-8')) if file.is_file() else fallback
             traces = optional('model-calls.json', [])
             gap_notes = {}
-            for file in (directory / 'checkpoints').glob('section-*.json'):
-                value = json.loads(file.read_text(encoding='utf-8'))['value']
+            for file in (directory / 'checkpoints').glob('section-*.json*'):
+                if file.suffix not in ('.json', '.gz'):
+                    continue
+                value = read_cache_json(file)['value']
                 if value.get('gapNote'):
                     gap_notes[value['draft']['title']] = value['gapNote']
             saved = {'sections': sections, 'gapNotes': gap_notes, 'metadata': {
@@ -78,7 +90,7 @@ def load_export_snapshot(request, directory):
         sections = [SectionDraft.model_validate(s) for s in saved['sections']]
         if [s.title for s in sections] != request.chapters + request.extension_titles():
             raise ValueError('chapter scope')
-        evidence = EvidenceStore(Corpus.model_validate_json((directory / 'corpus.json').read_text(encoding='utf-8')))
+        evidence = EvidenceStore(Corpus.model_validate(read_cache_json(directory / 'corpus.json')))
         evidence.topic_coverage = saved['metadata'].get('templateCoverage', {})
         evidence.content_gap_notes = saved.get('gapNotes', {})
         registry = VisualRegistry(evidence, directory / 'visuals', request.year, request.chapters)
@@ -90,7 +102,8 @@ def load_export_snapshot(request, directory):
         for section in sections:
             # A hashed, previously reviewed export snapshot is frozen content.
             # New editorial checks apply to new writing, not export-only retry.
-            if validate_section(section, section.title, evidence, request.year, review_semantics=False):
+            if validate_section(section, section.title, evidence, request.year,
+                                review_semantics=False, review_structure=False):
                 raise ValueError('saved content validation')
         return sections, evidence, saved['metadata']
     except (OSError, ValueError, KeyError, TypeError, ValidationError, AgentError) as error:
@@ -101,7 +114,8 @@ def load_export_snapshot(request, directory):
 def copy_export_snapshot(source, target, sections, evidence):
     """Carry the verified snapshot and embedded assets into the new attempt."""
     for name in SNAPSHOT_FILES:
-        shutil.copyfile(source / name, target / name)
+        file = cache_path(source / name)
+        shutil.copyfile(file, target / file.name)
     for name in OPTIONAL_SNAPSHOT_FILES:
         if (source/name).is_file():shutil.copyfile(source/name,target/name)
     copied = set()

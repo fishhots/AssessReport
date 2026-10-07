@@ -8,6 +8,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from assess_agent.checkpoints import RetryCache, workflow_identity, section_payload, restore_section
+from assess_agent.cache_io import cache_path, read_cache_json
+from assess_agent.cache_management import cleanup_terminal_task
 from assess_agent.errors import AgentError
 from assess_agent.evidence import EvidenceStore
 from assess_agent.model_config import ModelConfigInput, ModelConfigStore
@@ -119,6 +121,7 @@ def test_completed_chapter_is_not_regenerated_after_later_timeout(tmp_path, monk
     with pytest.raises(AgentError) as failure:
         run_workflow(request, settings, jobs, 1, model=ToolCallingTestModel())
     jobs.fail(str(request.task_id), 1, failure.value)
+    cleanup_terminal_task(settings, jobs, str(request.task_id), 1)
     jobs.retry(str(request.task_id))
     result = run_workflow(request, settings, jobs, 2, model=ToolCallingTestModel())
     assert writes.count(CHAPTERS[1]) == 1
@@ -147,8 +150,8 @@ def test_completed_analysis_is_reused_without_counting_a_new_paid_call(tmp_path)
         assert answer.content == '公开的分析结果'
     assert model.calls == 1 and writer.budget.calls == 0 and writer.budget.input_tokens == 0
     assert writer.call_trace[-1]['cacheHit']
-    for path in root.rglob('*.json'):
-        assert 'private-reasoning' not in path.read_text(encoding='utf-8')
+    for path in root.rglob('*.json*'):
+        assert 'private-reasoning' not in json.dumps(read_cache_json(path))
 
 
 def test_cache_rejects_different_model_inputs_rules_or_corrupt_files(tmp_path):
@@ -165,7 +168,7 @@ def test_cache_rejects_different_model_inputs_rules_or_corrupt_files(tmp_path):
     key = cache.key({'analysis': 'test'})
     cache.save('response', key, {'answer': 'old'})
     assert RetryCache(cache.directory.parent / 'attempt-2', 'changed-rules').load('response', key) is None
-    (cache.directory / 'checkpoints' / f'response-{key}.json').write_text('{broken', encoding='utf-8')
+    cache_path(cache.directory / 'checkpoints' / f'response-{key}.json').write_bytes(b'{broken')
     assert cache.load('response', key) is None
 
 

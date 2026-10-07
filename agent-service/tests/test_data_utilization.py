@@ -62,9 +62,9 @@ def test_duplicate_respondents_are_not_implicitly_multiplied(tmp_path):
 def test_leading_major_courses_share_the_verified_relevant_population(tmp_path):
     store=linked_store(tmp_path,leading=True)
     data=store.visuals.datasets[store.visuals.coverage['table-7-9']['datasetId']]
-    assert data['rows'][0][1]=='核心课程（66.67%）'
+    assert data['rows']==[['本校平均','60.0','66.67','60.0','—'],['甲专业','60.0','66.67','60.0','—']]
     result=json.loads(store.read(data['sourceIds'][0]).text)
-    assert result['detailRows']==[['甲专业','核心课程','66.67','6']]
+    assert result['scopedRecordCounts']['甲专业']==[[10,6],[5,3]]
 
 
 def test_opaque_joins_are_scoped_and_never_exposed_to_model_tools(tmp_path):

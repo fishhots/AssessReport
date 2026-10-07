@@ -1,7 +1,7 @@
 """Supplement fixed report topics with cohort-scoped, program-calculated results.
 
 These bindings consume actual DATA columns. They never infer an institution
-classification, pool cohorts, or reinterpret an undocumented numeric scale.
+classification or reinterpret an undocumented numeric scale.
 """
 from collections import Counter, defaultdict
 import re
@@ -27,14 +27,14 @@ def cohort_rows(registry, table):
     return []
 
 
-def register(registry, key, table, rows, columns, basis, series=None, labels=None, kind=None, multiple=False, valid=0, unit='%', details=None):
+def register(registry, key, table, rows, columns, basis, series=None, labels=None, kind=None, multiple=False, valid=0, unit='%', details=None, cohorts=None):
     if key not in registry.coverage or registry.coverage[key]['status'] != 'missing' or not rows:
         return
     result = registry.evidence.computed(table, {'cohort': registry.year, 'topic': registry.item(key)['caption'],
         'columns': columns, 'rows': rows, 'basis': basis, 'type': 'report_topic_statistics',**(details or {})})
     registry.register_statistics(key, {'materialId': table.material_id, 'sheet': table.sheet,
         'evidenceId': result['evidenceId']}, labels or [r[0] for r in rows], series or [],
-        basis, valid, 0, columns=columns, rows=rows, kind=kind, multiple=multiple, unit=unit)
+        basis, valid, 0, columns=columns, rows=rows, kind=kind, multiple=multiple, unit=unit, cohorts=cohorts)
 
 
 def leading_major_labeler(table, rows):
@@ -50,6 +50,35 @@ def leading_major_labeler(table, rows):
         if len(groups[row[mi]])<=1:return row[mi]
         return ((row[ai]+' / ') if ai is not None else '')+row[pi]
     return label
+
+
+def destination_population(registry, table, value_column, leading=False):
+    """Pool two real adjacent cohorts only when each has one unambiguous source.
+
+    Reference destination tables pool two cohorts, unlike the annual matrices.
+    Recount respondents rather than averaging rounded cohort percentages.
+    """
+    from types import SimpleNamespace
+    required=['您现在是否有工作','专业名称',value_column]
+    if '学院名称' in table.columns:required.append('学院名称')
+    if leading:required.append('一流专业显示名称')
+    versions={}
+    for year in (registry.year-1,registry.year):
+        candidates=[]
+        for candidate in registry.evidence.corpus.tables:
+            if any(column(candidate,c) is None for c in required):continue
+            rows=cohort_rows(SimpleNamespace(year=year,evidence=registry.evidence),candidate)
+            if rows:
+                # Older questionnaires may have fewer unrelated questions.
+                # Align named fields instead of requiring identical sheets.
+                mapping=[column(candidate,c) for c in table.columns]
+                projected=[[r[i] if i is not None else '' for i in mapping] for r in rows]
+                candidates.append((candidate,projected))
+        if len(candidates)!=1:return table,cohort_rows(registry,table),[registry.year]
+        versions[year]=candidates[0]
+    parents=list(dict.fromkeys(k for candidate,_ in versions.values() for k in candidate.source_ids))
+    joint=table.model_copy(update={'source_ids':parents})
+    return joint,[r for _,rows in versions.values() for r in rows],list(versions)
 
 
 def plan_report_statistics(registry):
@@ -117,28 +146,35 @@ def plan_report_statistics(registry):
                         series=[{'name':'比例','values':[percentage(n,total) for _,n in counts.most_common()]}],valid=total)
             # Each major's employment distribution; a single uploaded cohort is
             # explicitly labelled as such, even when the reference pooled two.
-            for key, prefix in [('table-1-7','您现在就业的行业类'), ('table-1-10','您现在从事的职业类')]:
+            for key, prefix in [('table-1-7','您现在就业的行业名称'), ('table-1-10','您现在从事的职业名称')]:
                 ci = column(table, prefix)
                 if ci is None or '专业名称' not in table.columns:
                     continue
+                destination_table,destination_rows,destination_years=destination_population(registry,table,prefix)
+                destination_employment=[r for r in destination_rows if r[status].startswith(('受雇','有全职工作','自由职业'))]
+                destination_basis='、'.join(f'{y}届' for y in destination_years)+('合并' if len(destination_years)>1 else '')
                 mi = table.columns.index('专业名称')
                 ai = table.columns.index('学院名称') if '学院名称' in table.columns else None
                 groups = defaultdict(list)
-                for row in employment:
+                for row in destination_employment:
                     if present(row[mi]) and present(row[ci]):
                         groups[(row[ai] if ai is not None else '',row[mi])].append(row[ci])
                 output = []
                 native=[]
                 for (faculty, major), values in sorted(groups.items()):
-                    if len(values) < 5:
-                        continue
-                    ranked=Counter(values).most_common(3)
-                    native.append([faculty,major,'；'.join(f'{label}（{percentage(count,len(values)):g}%）' for label,count in ranked)])
+                    ranked=Counter(values).most_common()
                     for label, count in ranked:
                         output.append([faculty,major,label,str(percentage(count,len(values))),str(len(values))])
-                register(registry,key,table,native,['学院名称','专业名称','本校各专业毕业生就业的主要行业' if '行业' in prefix else '本校各专业毕业生从事的主要职业'],
-                    f'{registry.year}届受雇、自主创业或自由职业样本；各专业该题有效回答为分母，分别列前三项；有效回答少于5人不展示。',
-                    details={'detailColumns':['学院','专业','行业或职业','比例（%）','有效回答人数'],'detailRows':output})
+                    # All singletons provide no concentrated destination. Keep
+                    # their complete distribution in evidence, not a long list
+                    # masquerading as the major's main industry/occupation.
+                    if len(values)<5 or ranked[0][1]<2:continue
+                    leaders=sorted(label for label,n in ranked if n==ranked[0][1])
+                    if key=='table-1-10':native.extend([faculty,major,label] for label in leaders)
+                    else:native.append([faculty,major,'；'.join(leaders)])
+                register(registry,key,destination_table,native,['学院名称','专业名称','本校该专业毕业生就业的主要行业' if '行业' in prefix else '本校该专业毕业生从事的主要职业'],
+                    f'{destination_basis}就业样本；使用具体行业/职业名称，列各专业人数最多的项目，并列时并列呈现；有效回答少于5人或所有去向均只有1条记录时不列主要去向，完整分布保留内部。',
+                    details={'detailColumns':['学院','专业','行业或职业','比例（%）','有效回答人数'],'detailRows':output},cohorts=destination_years)
             unemployed = [r for r in rows if r[status].startswith(('无工作','准备'))]
             counts = Counter(r[status] for r in unemployed)
             total = sum(counts.values())
@@ -178,19 +214,27 @@ def plan_report_statistics(registry):
                     series=[{'name':'月收入','values':[float(r[1]) for r in output],'sampleCounts':[int(r[2]) for r in output]}],kind='horizontal_bar',unit='元')
             if '一流专业显示名称' in table.columns:
                 mi=table.columns.index('一流专业显示名称')
-                for key,prefix in [('table-7-13','您现在就业的行业类'),('table-7-14','您现在从事的职业类')]:
+                for key,prefix in [('table-7-13','您现在就业的行业名称'),('table-7-14','您现在从事的职业名称')]:
                     ci=column(table,prefix)
                     if ci is None:continue
+                    destination_table,destination_rows,destination_years=destination_population(registry,table,prefix,leading=True)
+                    destination_employment=[r for r in destination_rows if r[status].startswith(('受雇','有全职工作','自由职业'))]
+                    destination_major=leading_major_labeler(table,destination_rows)
+                    destination_basis='、'.join(f'{y}届' for y in destination_years)+('合并' if len(destination_years)>1 else '')
                     groups=defaultdict(list)
-                    for row in employment:
-                        if present(row[mi]) and present(row[ci]):groups[major_label(row)].append(row[ci])
-                    output=[]
+                    for row in destination_employment:
+                        if present(row[mi]) and present(row[ci]):groups[destination_major(row)].append(row[ci])
+                    output=[];details=[]
                     for major,values in sorted(groups.items()):
-                        if len(values)<5:continue
-                        for label,n in Counter(values).most_common(3):
+                        ranked=Counter(values).most_common()
+                        details.extend([major,label,str(percentage(n,len(values))),str(len(values))] for label,n in ranked)
+                        if len(values)<5 or ranked[0][1]<2:continue
+                        for label,n in ranked:
+                            if n!=ranked[0][1]:break
                             output.append([major,label,str(percentage(n,len(values))),str(len(values))])
-                    register(registry,key,table,output,['专业','主要行业' if '行业' in prefix else '主要职业','比例（%）','有效回答人数'],
-                        f'{registry.year}届就业样本；按上传资料明确标注的一流专业分组，分母为各专业该题有效回答人数，列前三项，有效回答少于5人不展示。')
+                    register(registry,key,destination_table,output,['专业','主要行业' if '行业' in prefix else '主要职业','比例（%）','有效回答人数'],
+                        f'{destination_basis}就业样本；使用具体行业/职业名称，按资料明确标注的一流专业分组，列人数最多的项目，并列时并列呈现；有效回答少于5人或所有去向均只有1条记录时不列主要去向。',
+                        cohorts=destination_years,details={'detailRows':details,'detailColumns':['专业名称','行业或职业名称','比例（%）','有效回答人数']})
         # Course records have declared binary outcome codes, and the importance
         # code is accepted only when its textual meanings agree row by row.
         if '课程名称' in table.columns:
@@ -217,10 +261,15 @@ def plan_report_statistics(registry):
                         describe=lambda selected:'；'.join(f'{course}（{rate:g}%）' for course,rate,count in selected) or '—'
                         output.append([major,describe(higher),describe(lower)])
                         detail.extend([[major,course,str(rate),str(count)] for course,rate,count in ranked])
-                    register(registry,'table-7-9',table,output,['专业','课程满足比例相对较高的项目','课程满足比例相对较低的项目'],
-                        f'{registry.year}届；按资料标注的一流专业与课程分别计算满足工作或学习要求比例；'
-                        '评价记录不是人数，不将全部课程合成为毕业生达成率；各课程有效评价少于5条不展示，每专业列相对较高和较低的至多两项。',
-                        details={'detailColumns':['专业','课程','满足要求比例（%）','有效课程评价记录数'],'detailRows':detail})
+                    if output and 'table-7-9' in registry.coverage:
+                        evidence=registry.evidence.computed(table,{'cohort':registry.year,'type':'course_task_details',
+                            'columns':['专业','课程满足比例相对较高的项目','课程满足比例相对较低的项目'],'rows':output,
+                            'detailColumns':['专业','课程','满足要求比例（%）','有效课程评价记录数'],'detailRows':detail,
+                            'basis':'按课程独立统计的评价记录；不能替代表7-9两类对口人群的重要度和满足度。'})
+                        item=registry.item('table-7-9')
+                        registry.evidence.topic_sources.setdefault(item['chapter'],{}).setdefault(item['subsection'],[]).append(evidence['evidenceId'])
+                        if registry.coverage['table-7-9']['status']=='missing':
+                            registry.coverage['table-7-9']['reason']='需匿名关联及明确毕业状态，分别筛选对口就业/对口读研与对口就业人群。'
                 for group in ('学院名称','课程名称'):
                     if group not in table.columns:continue
                     gi=table.columns.index(group);groups=defaultdict(list)
@@ -241,7 +290,8 @@ def plan_report_statistics(registry):
                     if group=='学院名称':
                         cols=['学院','课程满足工作或学习要求比例（%）','有效课程评价记录数']
                         if importance is not None and importance_text is not None:cols+=['认为课程有重要性的比例（%）','有效重要性评价记录数']
-                        register(registry,'table-5-9',table,output,cols,f'{registry.year}届课程评价记录；分别以各项有效记录为分母，同一毕业生可评价多门课程，记录数不是人数。')
+                        if 'table-5-9' in registry.coverage and registry.coverage['table-5-9']['status']=='missing':
+                            registry.coverage['table-5-9']['reason']='已有课程评价记录；需匿名关联及明确毕业状态，才能分别计算两类对口人群的课程重要度与满足度。'
                     else:
                         result=registry.evidence.computed(table,{'cohort':registry.year,'topicPath':'专业核心课程评价 / 专业课程培养效果',
                             'type':'course_results','columns':['课程','满足要求比例（%）','有效课程评价记录数'],
@@ -282,17 +332,18 @@ def plan_report_statistics(registry):
         'table-5-1': [('的教学满意程度','学院名称'),('专业教学中应该改进','学院名称')],
         'table-5-2': [('您对以下实习和实践环节是否满意','专业大类名称')],
         'table-5-3': [('请您对校内实习实践进行评价','学院名称'),('请您对校外实习实践进行评价','学院名称')],
-        'table-5-4': [('您在工作中使用AI工具/技术的主要应用场景','您现在从事的职业类')],
+        'table-5-4': [('您在工作中使用AI工具/技术的主要应用场景','您现在从事的职业一级分类')],
         'table-5-6': [('您认为AI时代需强化的能力和素养','学院名称')],
         'table-5-7': [('您认为学校在AI培养方面需要加强','学院名称')],
         'table-5-8': [('请评价您在读期间的专业课任课教师的教学方法','学院名称'),('本专业的教师提供的以下课外指导','学院名称')],
         'table-5-11': [('请您对学习过程中使用的教材情况进行评价','学院名称')],
-        'table-6-1': [('请您对学校提供的数字化资源内容','学院名称'),('数字化建设情况进行评价','学院名称')],
+        'table-6-1': [('数字化建设情况进行评价','学院名称')],
         'table-7-8': [('的教学满意程度','一流专业显示名称')],
         'table-7-10': [('请评价您在读期间的专业课任课教师的教学方法','一流专业显示名称'),('本专业的教师提供的以下课外指导','一流专业显示名称')],
         'table-7-11': [('请您对校内实习实践进行评价','一流专业显示名称'),('请您对校外实习实践进行评价','一流专业显示名称')],
     }
     for key,questions in specs.items():
+        if key not in registry.coverage:continue
         output=[];table=None;multiple=False
         for keyword,group_column in questions:
             q=find_question(analyzer,keyword,'')
@@ -317,13 +368,23 @@ def plan_report_statistics(registry):
                 elif q['type'] in ('single','matrix'):
                     for j,i in enumerate(indices):
                         values=[r[i] for r in group_rows if present(r[i])]
+                        if key=='table-5-2':
+                            # 未参加 is outside the satisfaction population,
+                            # rather than an unsatisfied response.
+                            values=[v for v in values if v in POSITIVE | NEGATIVE]
                         if len(values)<5 or not any(v in POSITIVE | NEGATIVE for v in values):continue
                         item=q['question'] if q['type']=='single' else q['items'][j]['label']
                         output.append([label,item,str(percentage(sum(v in POSITIVE for v in values),len(values))),str(len(values))])
         if table is not None:
+            if key in ('table-5-8','table-7-10'):
+                extra,parents=teacher_comparison_rows(registry,table,rows,group_column,output)
+                output.extend(extra)
+                table=table.model_copy(update={'source_ids':list(dict.fromkeys(table.source_ids+parents))})
             group_name='学院' if all(c=='学院名称' for _,c in questions) else '专业' if all(c=='一流专业显示名称' for _,c in questions) else '学科门类' if all(c=='专业大类名称' for _,c in questions) else '职业类'
             register(registry,key,table,output,[group_name,'评价项目或主要需求','比例（%）','有效回答人数'],
-                f'{registry.year}届；本校平均及各组各题有效回答分别为分母；多选保留全部选项，评价项为正向回答比例；有效回答少于5人不展示。',multiple=multiple)
+                f'{registry.year}届；本校平均及各组各题有效回答分别为分母；多选保留全部选项，评价项为正向回答比例；有效回答少于5人不展示。'+
+                ('实习实践环节满意度仅统计实际参加并回答满意度者，“未参加”不计入分母；不同实验环节保持独立。' if key=='table-5-2' else '')+
+                ('教师指导总体满足度需明确原始指标或计算规则，不能用三个分项比例的均值替代；高频交流为每月至少一次（含每周至少一次）。' if key in ('table-5-8','table-7-10') else ''),multiple=multiple)
     # The upload measures frequency per work task, rather than a single overall
     # frequency question. Preserve task denominators; never average all answers
     # into a graduate-level usage rate.
@@ -333,36 +394,40 @@ def plan_report_statistics(registry):
         entries=[r for r in q['items'] if r['validCount']>=5]
         choices=list(dict.fromkeys(c['label'] for r in entries for c in r['items']))
         if entries and 2<=len(choices)<=8:
-            series=[{'name':choice,'values':[next((c['percentage'] for c in r['items'] if c['label']==choice),0) for r in entries]} for choice in choices]
-            output=[[r['label'],str(r['validCount'])] for r in entries]
-            register(registry,'figure-5-15',table,output,['工作任务','有效回答人数'],
-                f'{registry.year}届；各工作任务分别采用该任务有效回答为分母，同一人可回答多个任务；不是总体毕业生使用频率，有效回答少于5人不展示。',
-                series=series,kind='stacked_bar')
-        gi=column(table,'您现在从事的职业类')
+            # 汇总所有工作任务的频率回答，得到总体频率分布（按任务-回答计），
+            # 不再逐任务列举；4 根柱子分别代表 总是/经常/偶尔/从不。
+            grand={c:0.0 for c in choices}; total=0
+            for r in entries:
+                n=r['validCount']; total+=n
+                for c in r['items']:
+                    if c['label'] in grand:
+                        grand[c['label']]+=n*(c.get('percentage',0)/100.0)
+            values=[round(grand[c]/total*100,2) if total else 0 for c in choices]
+            register(registry,'figure-5-15',table,[[c] for c in choices],['频率'],
+                f'{registry.year}届；汇总各工作任务回答，按任务-回答统计各频率选项占比，不区分具体任务；有效回答少于5人的任务不计入。',
+                series=[{'name':'AI应用频率','values':values}], labels=list(choices), kind='bar')
+        gi=column(table,'您现在从事的职业一级分类')
+        if gi is None:gi=column(table,'您现在从事的职业类')
         if gi is not None:
-            output=[];task_counts=[]
+            task_counts=[]
             for j,c in enumerate(q['columns']):
                 ci=table.columns.index(c);groups=defaultdict(list)
                 for row in cohort_rows(registry,table):
                     if present(row[gi]) and present(row[ci]):groups[row[gi]].append(row[ci])
                 for group,values in sorted(groups.items()):
-                    if len(values)<5:continue
+                    if len(values)<5 or not set(values)<={'总是','经常','偶尔','从不'}:continue
                     counts=Counter(values)
                     task_counts.append({'group':group,'task':q['items'][j]['label'],
                                         'validCount':len(values),'counts':dict(counts)})
-                    for label,n in counts.most_common():
-                        output.append([group,q['items'][j]['label'],label,str(percentage(n,len(values))),str(len(values))])
-            from .table_layout import ai_frequency_summary
-            summary=ai_frequency_summary(task_counts)
-            if summary:
-                register(registry,'table-5-5',table,summary['rows'],summary['columns'],
-                    f'{registry.year}届；按职业类及工作任务分别统计；高频为总是或经常；各任务以自身有效回答人数为分母；'
-                    '每职业类列高频比例最高、最低的代表任务（并列按任务名排列，至多两项），不将不同任务分母相加或平均；有效回答少于5人不展示。',
-                    details={'detailColumns':['职业类','工作任务','使用频率','比例（%）','有效回答人数'],
-                             'detailRows':output,'taskFrequencyCounts':task_counts})
-            else:
-                register(registry,'table-5-5',table,output,['职业类','工作任务','使用频率','比例（%）','有效回答人数'],
-                    f'{registry.year}届；按职业类及工作任务分别统计，分母为各组该任务有效回答人数，不等同于总体AI使用频率；有效回答少于5人不展示。')
+            # 直接展开为四列频率百分比，去掉有效回答人数；每个任务一行。
+            freq_order=['总是','经常','偶尔','从不']; rows=[]
+            for tc in sorted(task_counts,key=lambda t:(t['group'],-(t['counts'].get('总是',0)+t['counts'].get('经常',0))/t['validCount'],t['task'])):
+                n=tc['validCount']; counts=tc['counts']
+                rows.append([tc['group'],tc['task'],*(str(percentage(counts.get(f,0),n)) for f in freq_order)])
+            register(registry,'table-5-5',table,rows,
+                ['职业分类','主要工作任务','总是（%）','经常（%）','偶尔（%）','从不（%）'],
+                f'{registry.year}届；按资料的{table.columns[gi]}及工作任务分别统计各频率选项占比（总是/经常/偶尔/从不），分母为该任务有效回答人数；有效回答少于5人或频率编码不明时不展示。',
+                details={'taskCounts':task_counts,'groupingColumn':table.columns[gi]})
 
 
 def declared_disciplines(registry):
@@ -491,6 +556,7 @@ def plan_leading_major_metrics(registry):
     """Join declared membership to the actual cohort's major metric table."""
     pairs = set()
     parents = []
+    display_names=defaultdict(set)
     for table in registry.evidence.corpus.tables:
         if not all(c in table.columns for c in ('学院名称','专业名称','一流专业显示名称')):
             continue
@@ -499,6 +565,8 @@ def plan_leading_major_metrics(registry):
         chosen = {(r[ai],r[mi]) for r in rows if present(r[ai]) and present(r[mi]) and present(r[fi])}
         if chosen:
             pairs.update(chosen)
+            for row in rows:
+                if (row[ai],row[mi]) in chosen and present(row[fi]):display_names[row[ai],row[mi]].add(row[fi])
             result = registry.evidence.computed(table, {'type':'declared_leading_major_membership',
                 'cohort':registry.year, 'columns':['学院','专业'], 'rows':[list(p) for p in sorted(chosen)],
                 'basis':'来自资料明确标注的一流专业显示名称；不自动推断国家级或省级认定层次。'})
@@ -506,7 +574,9 @@ def plan_leading_major_metrics(registry):
     if not pairs:
         return
     specs = [('table-7-1','毕业去向落实率（%）'),('table-7-2','专业相关度（%）'),
-             ('table-7-3','月收入（元）'),('table-7-4','就业满意度（%）')]
+             ('table-7-3','月收入（元）'),('table-7-4','就业满意度（%）'),
+             ('table-7-5','通用能力达成度（%）'),('table-7-6','工程类专业毕业要求达成度（%）'),
+             ('table-7-7','工科类专业核心能力达成度（%）')]
     for key, metric in specs:
         if key not in registry.coverage or registry.coverage[key]['status'] != 'missing':
             continue
@@ -520,11 +590,62 @@ def plan_leading_major_metrics(registry):
         if len(keys) != len(set(keys)):
             registry.coverage[key]['reason']='同一学院专业存在重复指标行，需明确采用口径。'
             continue
-        output=[[r[ai],r[mi],r[vi] or '—'] for r in rows]
-        register(registry,key,table,output,['学院','专业',metric],
+        names={pair:next(iter(values)) if len(values)==1 else pair[1] for pair,values in display_names.items()}
+        collisions=Counter(names.values())
+        output=[]
+        for r in rows:
+            name=names.get((r[ai],r[mi]),r[mi])
+            if collisions[name]>1:name=f'{r[mi]}（{r[ai]}）'
+            output.append([name,r[vi] or '—'])
+        average_sources=[];averages=set()
+        for candidate in registry.evidence.corpus.tables:
+            if metric not in candidate.columns:continue
+            ci=candidate.columns.index(metric)
+            for r in cohort_rows(registry,candidate):
+                if any(r[candidate.columns.index(c)]=='本校平均' for c in ('学院名称','专业名称') if c in candidate.columns) and present(r[ci]):
+                    averages.add(r[ci]);average_sources+=candidate.source_ids
+        if len(averages)==1:output.insert(0,['本校平均',next(iter(averages))])
+        joint=table.model_copy(update={'source_ids':list(dict.fromkeys(table.source_ids+average_sources))})
+        register(registry,key,joint,output,['专业名称',metric],
             f'{registry.year}届专业主要指标原值；以资料标注的一流专业成员和学院、专业联合匹配；采用明确当届值，不平均不同专业。',
-            details={'membershipEvidenceIds':parents})
+            details={'membershipEvidenceIds':parents,'schoolAverageSourceIds':list(dict.fromkeys(average_sources))},
+            unit='元' if '元' in metric else '%')
         if registry.coverage[key]['status']=='prepared':
             data=registry.datasets[registry.coverage[key]['datasetId']]
             source=registry.evidence.read(data['binding']['questionEvidenceId'])
             source.parent_ids=list(dict.fromkeys([*source.parent_ids,*parents]))
+
+
+def teacher_comparison_rows(registry,table,rows,group_column,existing):
+    """Reference teacher indicators retain their separate response denominators."""
+    from .quantitative_review import parsed_number
+    if group_column not in table.columns:return [],[]
+    output=[];parents=[];aggregates=defaultdict(set)
+    labels={r[0] for r in existing}
+    labeler=leading_major_labeler(table,rows) if group_column=='一流专业显示名称' else None
+    ai=column(table,'学院名称');mi=column(table,'专业名称')
+    membership={(r[ai],r[mi]):labeler(r) for r in rows if labeler and ai is not None and mi is not None and labeler(r)}
+    for candidate in registry.evidence.corpus.tables:
+        vi=column(candidate,'教师指导总体满足度（%）')
+        if vi is None:continue
+        ca,cm=column(candidate,'学院名称'),column(candidate,'专业名称')
+        if ca is None:continue
+        if not labeler and cm is not None:continue
+        for row in cohort_rows(registry,candidate):
+            label='本校平均' if row[ca]=='本校平均' else membership.get((row[ca],row[cm]),'') if labeler and cm is not None else row[ca] if not labeler else ''
+            value=parsed_number(row[vi])
+            if label in labels and value is not None and 0<=value<=100:
+                aggregates[label].add(value);parents+=candidate.source_ids
+    for label,values in aggregates.items():
+        if len(values)==1:output.append([label,'教师指导总体满足度',str(next(iter(values))),'—'])
+    fi=column(table,'您与任课老师课下交流的频度');gi=column(table,group_column)
+    if fi is None or gi is None:return output,list(dict.fromkeys(parents))
+    groups=defaultdict(list);groups['本校平均']=rows
+    for row in rows:
+        if present(row[gi]):groups[labeler(row) if labeler else row[gi]].append(row)
+    known={'每周至少一次','每月至少一次','每学期至少一次','每年至少一次'}
+    for label,group in groups.items():
+        values=[r[fi] for r in group if present(r[fi])]
+        if len(values)>=5 and set(values)<=known:
+            output.append([label,'师生高频交流的比例',str(percentage(sum(v in {'每周至少一次','每月至少一次'} for v in values),len(values))),str(len(values))])
+    return output,list(dict.fromkeys(parents))

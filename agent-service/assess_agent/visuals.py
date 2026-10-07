@@ -343,7 +343,7 @@ class VisualRegistry:
                 raise AgentError("CHART_FILE", "图表文件丢失或已被修改")
         return {"valid": True, "assetId": asset_id, "templateId": item["id"], "unit": data["unit"], "sourceIds": asset["sourceIds"]}
 
-    def plan(self):
+    def plan(self, include_table_history=True):
         for item in ITEMS.values():
             binding = item.get("automaticBinding")
             if not binding or item["id"] not in self.coverage:
@@ -376,10 +376,13 @@ class VisualRegistry:
         plan_survey(self)
         from .report_statistics import plan_report_statistics
         plan_report_statistics(self)
+        if include_table_history:
+            from .table_history import attach_table_history
+            attach_table_history(self)
         self.flush()
 
     def register_statistics(self, template_id, question, labels, series, basis, valid, missing,
-                            multiple=False, columns=None, rows=None, kind=None, unit='%'):
+                            multiple=False, columns=None, rows=None, kind=None, unit='%', cohorts=None):
         """Program-owned data from a registered, computed question, never a model array."""
         item=self.item(template_id)
         table=self._data_table(question['materialId'],question['sheet'])
@@ -392,6 +395,8 @@ class VisualRegistry:
               'matchedRows':question.get('populationCount',len(table.rows)),'validSamples':valid if valid else None,
               'excludedSummaryRows':0,'columns':columns or [],'rows':rows or [],
               'binding':{'questionEvidenceId':source.id},'sourceIds':[source.id]}
+        if cohorts:
+            data.update(cohorts=cohorts,cohort=None if len(cohorts)>1 else self.year,pooledCohorts=len(cohorts)>1)
         self._validate_data(data)
         result=self.evidence.computed(table,data)
         self.evidence.read(result['evidenceId']).parent_ids=[source.id]
@@ -427,10 +432,11 @@ class VisualRegistry:
         return draft
 
     def flush(self):
+        from .store import write_json
         root = self.directory.parent
         root.mkdir(parents=True, exist_ok=True)
-        (root / "visual-coverage.json").write_text(json.dumps(list(self.coverage.values()), ensure_ascii=False, indent=2), encoding="utf-8")
-        (root / "visual-assets.json").write_text(json.dumps({"datasets": self.datasets, "assets": self.assets}, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(root / 'visual-coverage.json', list(self.coverage.values()))
+        write_json(root / 'visual-assets.json', {'datasets': self.datasets, 'assets': self.assets})
 
     def finalize(self, sections):
         selected = {v.template_id: v.asset_id for section in sections for v in section.visuals}

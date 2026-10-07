@@ -1,0 +1,76 @@
+name: assess-report
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "2"
+
+services:
+  frontend:
+    logging: *bounded-logging
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  backend:
+    logging: *bounded-logging
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      ASSESS_STORAGE_DIR: /app/data
+      ASSESS_INVITE_CODE: "${ASSESS_INVITE_CODE:-appmath}"
+      ASSESS_COOKIE_SECURE: "${ASSESS_COOKIE_SECURE:-false}"
+      ASSESS_ALLOWED_ORIGINS: "${ASSESS_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}"
+      AGENT_BASE_URL: http://agent:8000
+      AGENT_SERVICE_TOKEN: "${ASSESS_SERVICE_TOKEN:?请在 .env.docker 中设置 ASSESS_SERVICE_TOKEN}"
+    volumes:
+      - backend-data:/app/data
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  agent:
+    logging: *bounded-logging
+    build:
+      context: ./agent-service
+    restart: unless-stopped
+    environment:
+      ASSESS_HOST: 0.0.0.0
+      ASSESS_PORT: "8000"
+      ASSESS_SERVICE_TOKEN: "${ASSESS_SERVICE_TOKEN:?请在 .env.docker 中设置 ASSESS_SERVICE_TOKEN}"
+      ASSESS_UPLOAD_ROOT: /shared/backend-data/uploads
+      ASSESS_DATA_ROOT: /app/data
+      ASSESS_CHART_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+      ASSESS_MODEL_TIMEOUT: "${ASSESS_MODEL_TIMEOUT:-90}"
+      ASSESS_RELAY_MODEL_TIMEOUT: "${ASSESS_RELAY_MODEL_TIMEOUT:-600}"
+      ASSESS_RELAY_TEST_TIMEOUT: "${ASSESS_RELAY_TEST_TIMEOUT:-60}"
+      ASSESS_JOB_TIMEOUT: "${ASSESS_JOB_TIMEOUT:-3600}"
+      ASSESS_MAX_MODEL_CALLS: "${ASSESS_MAX_MODEL_CALLS:-120}"
+      ASSESS_ANALYSIS_OUTPUT_TOKENS: "${ASSESS_ANALYSIS_OUTPUT_TOKENS:-16000}"
+      ASSESS_MAX_OUTPUT_TOKENS: "${ASSESS_MAX_OUTPUT_TOKENS:-12000}"
+      ASSESS_UPDATE_WORD_FIELDS: "false"
+    volumes:
+      - agent-data:/app/data
+      - backend-data:/shared/backend-data:ro
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+  agent-data:

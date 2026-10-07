@@ -35,6 +35,9 @@ import {
   ShieldCheck,
   WandSparkles,
   ClipboardList,
+  LogIn,
+  LogOut,
+  UserPlus,
 } from '@lucide/vue'
 defineProps<{ name: string; size?: number }>()
 const icons: Record<string, unknown> = {
@@ -73,6 +76,9 @@ const icons: Record<string, unknown> = {
   ShieldCheck,
   WandSparkles,
   ClipboardList,
+  LogIn,
+  LogOut,
+  UserPlus,
 }
 </script>
 <template>

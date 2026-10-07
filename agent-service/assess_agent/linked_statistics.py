@@ -74,7 +74,7 @@ def plan_linked_courses(registry):
                  '对口读研仅实际境内读研且明确专业一致；重要度为“有些重要”至“极其重要”的记录比例，'
                  '培养效果以认为课程重要且有效回答满足题的记录为分母；评价记录数不是毕业生人数。')
         details={'duplicateRespondentKeys':duplicates,'unmatchedCourseRecords':unmatched}
-        plan_leading_courses(registry,joint,both,basis)
+        plan_scoped_course_tables(registry,joint,both,joined['employment'],basis,details)
         for scope,rows,start in [('combined',both,21),('employment',joined['employment'],23),('study',joined['study'],25)]:
             rates=course_rates(table,rows)
             if rates is None:
@@ -113,35 +113,38 @@ def plan_linked_courses(registry):
             for path in COURSE_PATHS:
                 registry.evidence.topic_sources.setdefault('第五章 教学培养反馈',{}).setdefault(path,[]).append(result['evidenceId'])
             if group=='学院名称':
-                register(registry,'table-5-9',joint,output,cols,basis,details=details)
                 pairs=[r for r in output if r[2]!='—']
                 register(registry,'figure-5-27',joint,pairs,cols,basis+'散点虚线为各学院点的均值。',
                          labels=[r[0] for r in pairs],series=[{'name':'核心课程重要度','values':[float(r[1]) for r in pairs]},
                          {'name':'核心课程满足度','values':[float(r[2]) for r in pairs]}],kind='scatter',details=details)
 
 
-def plan_leading_courses(registry,table,rows,basis):
-    if '一流专业显示名称' not in table.columns:return
+def plan_scoped_course_tables(registry,table,combined,employment,basis,details):
+    """The reference compares two populations, each with two separate rates."""
     from .report_statistics import leading_major_labeler
-    labeler=leading_major_labeler(table,rows)
-    mi=table.columns.index('一流专业显示名称');ci=table.columns.index('课程名称')
-    groups=defaultdict(list)
-    for row in rows:
-        if present(row[mi]) and present(row[ci]):groups[labeler(row),row[ci]].append(row)
-    majors=defaultdict(list);detail=[]
-    for (major,course),values in groups.items():
-        rates=course_rates(table,values)
-        if rates is None or rates[1] is None or rates[3]<5:continue
-        rate=rates[1];count=rates[3]
-        majors[major].append((course,rate,count))
-        detail.append([major,course,str(rate),str(count)])
-    output=[]
-    for major,values in sorted(majors.items()):
-        ranked=sorted(values,key=lambda v:(-v[1],v[0]));count=max(1,min(2,len(values)//2))
-        higher=ranked[:count]
-        lower=sorted((v for v in values if v[1]<higher[-1][1]),key=lambda v:(v[1],v[0]))[:count]
-        describe=lambda entries:'；'.join(f'{course}（{rate:g}%）' for course,rate,n in entries) or '—'
-        output.append([major,describe(higher),describe(lower)])
-    register(registry,'table-7-9',table,output,['专业','课程满足比例相对较高的项目','课程满足比例相对较低的项目'],
-        basis+'按资料明确标注的一流专业分组；每专业列相对较高与较低的至多两项，课程有效评价少于5条不展示。',
-        details={'detailColumns':['专业','课程','满足要求比例（%）','有效课程评价记录数'],'detailRows':detail})
+    for key,group in [('table-5-9','学院名称'),('table-7-9','一流专业显示名称')]:
+        gi=column(table,group)
+        if gi is None:continue
+        labeler=leading_major_labeler(table,combined+employment) if group=='一流专业显示名称' else None
+        scopes=[]
+        for rows in (combined,employment):
+            groups=defaultdict(list);groups['本校平均']=rows
+            for row in rows:
+                if present(row[gi]):groups[labeler(row) if labeler else row[gi]].append(row)
+            scopes.append(groups)
+        labels=list(dict.fromkeys(label for groups in scopes for label in groups))
+        output=[];counts={}
+        for label in labels:
+            values=[];counts[label]=[]
+            for groups in scopes:
+                rates=course_rates(table,groups.get(label,[]))
+                if rates is None:
+                    values+=['—','—'];counts[label].append([0,0])
+                else:
+                    importance,outcome,n,m=rates
+                    values += [str(importance) if n>=5 else '—',str(outcome) if outcome is not None and m>=5 else '—']
+                    counts[label].append([n,m])
+            if any(v!='—' for v in values):output.append([label,*values])
+        register(registry,key,table,output,[group,'对口就业/对口读研重要度','对口就业/对口读研满足度','对口就业重要度','对口就业满足度'],
+            basis+'表内对口就业/对口读研与对口就业分别筛选并独立统计，不用课程名称排行替代。',
+            details={**details,'scopedRecordCounts':counts})

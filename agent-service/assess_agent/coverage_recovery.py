@@ -2,7 +2,7 @@
 from .errors import AgentError
 from .schemas import ContentBlock, SectionDraft
 from .topic_evidence import fallback_findings, normalize_subsections, topic_packets
-from .validation import template_coverage, validate_section
+from .validation import template_coverage, validate_section, subsection_paths, container_only_paths
 from .repair import prepare_repair
 from .checkpoints import candidate_payload, restore_candidate
 
@@ -51,13 +51,13 @@ def recover_coverage(writer, draft, config, year, check=lambda: None, *, progres
                 save_batch(candidate,batch,True)
             for block in candidate.blocks:
                 if block.subsection not in batch or block.kind=='gap':continue
-                if not validate_section(SectionDraft(title=draft.title,blocks=[block]),draft.title,store,year):
+                if not validate_section(SectionDraft(title=draft.title,blocks=[block]),draft.title,store,year,review_structure=False):
                     draft.blocks.append(block);written.add(block.subsection)
         for path in batch:
             fallback=False
             if path not in written:
                 for block in fallback_findings(packets[path]):
-                    if not validate_section(SectionDraft(title=draft.title,blocks=[block]),draft.title,store,year):
+                    if not validate_section(SectionDraft(title=draft.title,blocks=[block]),draft.title,store,year,review_structure=False):
                         draft.blocks.append(block);written.add(path);fallback=True
             audit.append({'subsection':path,'status':'completed' if path in written else 'generation_incomplete',
                           'method':'verified_statistics_fallback' if fallback else 'model_completion',
@@ -66,9 +66,11 @@ def recover_coverage(writer, draft, config, year, check=lambda: None, *, progres
         pending=None
     # A chapter summary never requires a new uploaded document. Its already
     # verified findings are sufficient to preserve a factual short summary.
-    occupied={b.subsection for b in draft.blocks if b.kind!='gap'}
-    findings=[b for b in draft.blocks if b.kind=='finding' and b.subsection!='本章小结']
-    if '本章小结' in missing and '本章小结' not in occupied and findings:
+    containers=container_only_paths(draft.title)
+    findings=[b for b in draft.blocks if b.kind=='finding' and b.subsection!='本章小结'
+              and b.subsection not in containers]
+    has_summary_analysis=any(b.subsection=='本章小结' and b.kind in ('finding','inference') for b in draft.blocks)
+    if '本章小结' in subsection_paths(draft.title) and not has_summary_analysis and findings:
         selected=[];topics=set()
         for block in findings:
             if block.subsection in topics:continue
