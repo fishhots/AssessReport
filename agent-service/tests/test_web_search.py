@@ -13,7 +13,8 @@ from assess_agent.schemas import Corpus, JobRequest
 from assess_agent.settings import CHAPTERS, Settings
 from assess_agent.web_archive import WebArchive, entry_evidence
 from assess_agent.web_contracts import (WebSearchDirective, compose_query, host_allowed,
-                                       normalize_site, safe_url)
+                                       normalize_site, normalize_year, page_years, safe_url,
+                                       year_allowed)
 from assess_agent.web_search import DeepSeekSearchClient, WebSearchService
 from assess_agent.web_tools import web_tools
 
@@ -71,7 +72,7 @@ def directive(**changes):
 def test_directive_builds_site_scoped_bounded_queries():
     spec = directive(afterYear=2024)
     query = spec.queries()[0]["query"]
-    assert f"site:{SITE}" in query and "lang:zh" in query and "after:2024" in query
+    assert f"site:{SITE}" in query and "lang:zh" in query and "2024" in query and "after:" not in query
     assert "测试大学" in query and len(query) <= 128
     assert spec.queries()[0]["category"] == "SPEECH"
     assert directive(topics=["strategic_plan"]).queries()[0]["category"] == "REFERENCE"
@@ -263,3 +264,113 @@ def test_backend_job_request_round_trips_web_search_contract():
     assert request.web_search.site == SITE
     assert request.model_dump(by_alias=True)["webSearch"]["topics"] == ["leadership_speech", "strategic_plan"]
     assert JobRequest.model_validate({**payload, "webSearch": None}).web_search is None
+
+
+# ---------------------------------------------------------------- 年份区间
+
+
+def dated_results():
+    """三条结果：区间内、区间外、无年份线索；正文够长以免触发 Fetch。"""
+    base = search_results()[0]
+    return [
+        {**base, "url": f"https://www.{SITE}/2025/a", "title": "2025年人才培养工作会议讲话",
+         "date": "2025-05-01T00:00:00+00:00"},
+        {**base, "url": f"https://www.{SITE}/2024/b", "title": "2024年学校工作总结",
+         "date": "2024-05-01T00:00:00+00:00"},
+        {**base, "url": f"https://www.{SITE}/news/c", "title": "学校简介", "date": None},
+    ]
+
+
+def test_year_range_directive_accepts_short_years_and_builds_operators():
+    spec = directive(yearFrom=25, yearTo=25)
+    assert (spec.year_from, spec.year_to) == (2025, 2025)
+    assert spec.year_label() == "2025"
+    query = spec.queries()[0]["query"]
+    assert "2025" in query and "after:" not in query and "before:" not in query and len(query) <= 128
+
+    # 只填结束年份自动补成单年区间；旧版 afterYear 仍等价于只设下界。
+    assert directive(yearTo=2025).year_from == 2025
+    legacy = directive(afterYear=2024)
+    assert "2024" in legacy.queries()[0]["query"] and "after:" not in legacy.queries()[0]["query"]
+    assert normalize_year("25") == 2025 and normalize_year(1999) is None
+
+    with pytest.raises(ValidationError):
+        directive(yearFrom=2026, yearTo=2025)
+    with pytest.raises(ValidationError):
+        directive(yearFrom=3000)
+
+
+def test_page_years_extraction_and_verdict():
+    assert page_years(published="2025-05-01T00:00:00+00:00") == [2025]
+    assert page_years(title="2023—2025 事业发展规划") == [2023, 2025]
+    # 8 位日期编号不能被误判成年份
+    assert page_years(url=f"https://www.{SITE}/202405150001/a") == []
+    assert year_allowed([2023, 2025], 2025, 2025)    # 任一命中即保留
+    assert not year_allowed([2024], 2025, 2025)      # 明确在区间外
+    assert year_allowed([], 2025, 2025)              # 无年份默认放行（官网多不标日期）
+    assert not year_allowed([], 2025, 2025, False)   # 显式严格排除
+    assert year_allowed([], None, None)              # 未限定年份一律放行
+
+
+def test_run_keeps_only_in_range_pages_before_any_fetch(tmp_path):
+    settings = make_settings(tmp_path)
+    client, calls = mock_client(results=dated_results())
+    archive = WebArchive(tmp_path / "archive.sqlite3")
+    service = WebSearchService(settings, tmp_path, client=client, archive=archive)
+
+    outcome = service.run(directive(yearFrom=2025, yearTo=2025, fetchContent=True))
+    assert outcome["count"] == 2 and "2025" in outcome["entries"][0]["title"]
+    assert outcome["yearLabel"] == "2025" and outcome["filteredYears"] == 1
+    assert archive.stats()["total"] == 2
+    # 明确落在区间外的页面在 Fetch 之前就被丢弃，不产生额外计费请求。
+    assert not any(call[0].endswith("/fetch") for call in calls)
+
+    preview = service.preview(directive(yearFrom=25, yearTo=25))
+    assert preview["yearLabel"] == "2025" and preview["yearFrom"] == 2025
+
+    strict = service.run(directive(yearFrom=2025, yearTo=2025, includeUndated=False))
+    assert strict["count"] == 1 and strict["filteredYears"] == 2
+
+
+def test_year_range_changes_cache_key_and_is_not_reused_across_years(tmp_path):
+    assert directive(yearFrom=2025, yearTo=2025).query_key("leadership_speech") != \
+        directive(yearFrom=2024, yearTo=2024).query_key("leadership_speech")
+    settings = make_settings(tmp_path)
+    client, calls = mock_client(results=dated_results())
+    service = WebSearchService(settings, tmp_path, client=client)
+    service.run(directive(yearFrom=2025, yearTo=2025))
+    service.run(directive(yearFrom=2024, yearTo=2024))
+    assert len([call for call in calls if call[0].endswith("/search")]) == 2
+
+
+def test_web_search_api_year_range_contract(tmp_path):
+    settings = make_settings(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        preview = client.post("/web-search/preview", json={
+            "school": "测试大学", "site": SITE, "topics": ["strategic_plan"],
+            "yearFrom": 25, "yearTo": 25}).json()
+        assert preview["yearLabel"] == "2025" and preview["yearFrom"] == 2025
+        assert "2025" in preview["queries"][0]["query"]
+        assert "after:" not in preview["queries"][0]["query"] and "before:" not in preview["queries"][0]["query"]
+        assert client.post("/web-search/preview", json={
+            "school": "测试大学", "yearFrom": 2026, "yearTo": 2025}).status_code == 422
+        assert client.post("/web-search/preview", json={
+            "school": "测试大学", "yearFrom": "不是年份"}).status_code == 422
+
+
+def test_job_request_round_trips_year_range():
+    payload = {
+        "taskId": "11111111-1111-4111-8111-111111111111",
+        "school": "测试大学", "year": 2025, "modelId": "deepseek", "templateId": "graduate",
+        "chapters": [CHAPTERS[0]],
+        "materials": [{"id": "22222222-2222-4222-8222-222222222222",
+                       "name": "data.xlsx", "category": "DATA", "extractedText": None}],
+        "instructions": "", "customTopic": None,
+        "webSearch": {"enabled": True, "school": "测试大学", "site": SITE,
+                      "topics": ["leadership_speech"], "maxResults": 4, "maxPages": 8,
+                      "yearFrom": 2025, "yearTo": 2025, "includeUndated": False},
+    }
+    request = JobRequest.model_validate(payload)
+    assert (request.web_search.year_from, request.web_search.year_to) == (2025, 2025)
+    dumped = request.model_dump(by_alias=True)["webSearch"]
+    assert dumped["yearFrom"] == 2025 and dumped["yearTo"] == 2025

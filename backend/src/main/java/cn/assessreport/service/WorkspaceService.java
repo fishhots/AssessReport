@@ -118,12 +118,14 @@ public class WorkspaceService {
                 String label = archiveText(page.get("topicLabel"), 40);
                 String url = archiveText(page.get("url"), 500);
                 String fetchedAt = archiveText(page.get("fetchedAt"), 60);
+                String yearLabel = archiveText(page.get("yearLabel"), 40);
                 Category category = archiveCategory(page.get("category"));
                 String header = "来源：学校官网公开信息\n标题：" + title + "\n网址：" + url
-                        + "\n检索主题：" + label + "\n抓取时间：" + fetchedAt + "\n\n";
+                        + "\n检索主题：" + label + "\n资料年份：" + (yearLabel.isEmpty() ? "未限定" : yearLabel)
+                        + "\n抓取时间：" + fetchedAt + "\n\n";
                 byte[] bytes = (header + content).getBytes(StandardCharsets.UTF_8);
                 Material material = new Material(UUID.randomUUID().toString(),
-                        archiveName(school, label, title), bytes.length, category, Instant.now());
+                        archiveName(school, label, title, yearLabel), bytes.length, category, Instant.now());
                 Files.write(scope().root.resolve("uploads").resolve(material.id()), bytes);
                 added.add(material);
                 if (!entryId.isEmpty()) receipts.add(Map.of("entryId", entryId, "materialId", material.id()));
@@ -150,8 +152,9 @@ public class WorkspaceService {
         try { return Category.valueOf(String.valueOf(value).trim().toUpperCase(Locale.ROOT)); }
         catch (RuntimeException ignored) { return Category.REFERENCE; }
     }
-    private static String archiveName(String school, String label, String title) {
-        String base = (school + "_" + label + "_" + title).replaceAll("^_+|_+$", "");
+    private static String archiveName(String school, String label, String title, String yearLabel) {
+        String base = (school + "_" + label + "_" + (yearLabel.isEmpty() ? "" : yearLabel + "_") + title)
+                .replaceAll("^_+|_+$", "");
         base = base.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("\\s+", " ").trim();
         if (base.isBlank()) base = "学校官网资料";
         if (base.length() > 100) base = base.substring(0, 100);

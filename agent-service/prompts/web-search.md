@@ -4,13 +4,13 @@
 
 - `list_web_search_topics()`：列出可用主题（领导讲话、战略规划、办学定位、人才培养、质量报告、学科与改革）及默认资料类别。
 - `search_web_archive(query, topic, limit)`：只查本地归档库，不联网、不产生费用。**优先用它**，命中即可直接复用。
-- `search_school_web(topic, site, keywords, max_results, refresh)`：按「学校 + 官网域名 + 主题」下发定向检索指令。site 填官网域名（如 `bistu.edu.cn`），系统会自动加上 `site:` 与 `lang:zh` 语法，并丢弃站外结果。`refresh=true` 才重新联网。
+- `search_school_web(topic, site, keywords, max_results, year_from, year_to, refresh)`：按「学校 + 官网域名 + 主题 + 年份区间」下发定向检索指令。site 填官网域名（如 `bistu.edu.cn`），系统会自动加上 `site:` 与 `lang:zh` 语法，并丢弃站外结果。`refresh=true` 才重新联网。
 - `fetch_school_page(url, topic)`：抓取一个指定的官网页面。
 
 ### 使用顺序
 
 1. 先用 `search_web_archive` 查已有归档；命中且内容够用就不再联网。
-2. 归档不足时，用 `list_web_search_topics` 确认主题，再用 `search_school_web` 精准检索；每次只补一个主题，不要一次穷举全部主题。
+2. 归档不足时，用 `list_web_search_topics` 确认主题，再用 `search_school_web` 精准检索；每次只补一个主题，不要一次穷举全部主题。若用户指定了资料年份区间（例如「只要 2025 年」），把起止年份分别传给 `year_from` / `year_to`（同一年就填相同值，可用 `25` 简写）；系统会自动加 `after:` / `before:` 并**只归档该区间的网页**，未标注年份的页面默认排除。
 3. 工具返回的 `evidenceIds` 只是候选，必须用 `read_evidence` 或 `search_evidence` 读取并核实正文后，才能填入 `source_ids`。
 4. 每个主题最多检索一次；同一主题重复检索不会带来新信息。
 

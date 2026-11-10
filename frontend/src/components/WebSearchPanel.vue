@@ -36,9 +36,27 @@ const form = reactive({
   topics: ['leadership_speech', 'strategic_plan'] as string[],
   maxResults: 5,
   maxPages: 8,
-  afterYear: null as number | null,
+  yearFrom: null as number | null,
+  yearTo: null as number | null,
+  includeUndated: true,
   refresh: false,
   fetchContent: true,
+})
+
+/** 允许填 25 或 2025；前端先归一化，后端也会再校验一次。 */
+function toFullYear(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  const year = Math.trunc(n)
+  if (year >= 1 && year <= 99) return 2000 + year
+  return year >= 2000 && year <= 2100 ? year : null
+}
+
+const yearError = computed(() => {
+  const from = toFullYear(form.yearFrom)
+  const to = toFullYear(form.yearTo)
+  return from && to && from > to ? '起始年份不能大于结束年份' : ''
 })
 
 const topics = computed(() => status.value?.topics?.length ? status.value.topics : fallbackTopics)
@@ -57,7 +75,9 @@ function directive(): WebSearchDirective {
     keywords: form.keywords.trim(),
     maxResults: Number(form.maxResults) || 5,
     maxPages: Number(form.maxPages) || 8,
-    afterYear: form.afterYear || null,
+    yearFrom: toFullYear(form.yearFrom),
+    yearTo: toFullYear(form.yearTo),
+    includeUndated: form.includeUndated,
     refresh: form.refresh,
     fetchContent: form.fetchContent,
   }
@@ -84,17 +104,26 @@ async function loadAll() {
   } catch (e) { failure(e) } finally { busy.value = '' }
 }
 async function doPreview() {
-  busy.value = 'preview'; resetNotes()
+  resetNotes()
+  if (yearError.value) { error.value = yearError.value; return }
+  busy.value = 'preview'
   try { preview.value = await api.webSearchPreview(directive()) } catch (e) { failure(e) } finally { busy.value = '' }
 }
 async function doRun() {
-  busy.value = 'run'; resetNotes()
+  resetNotes()
+  if (yearError.value) { error.value = yearError.value; return }
+  busy.value = 'run'
   try {
     const outcome = await api.webSearchRun(directive())
     result.value = outcome
-    preview.value = { school: form.school, site: form.site, maxResults: form.maxResults,
-      maxPages: form.maxPages, afterYear: form.afterYear, refresh: form.refresh, queries: outcome.queries || [] }
-    message.value = `检索完成：归档 ${outcome.entries.length} 页，复用 ${outcome.reused ?? 0} 页，新增入库 ${outcome.imported} 份资料`
+    preview.value = { school: form.school, site: form.site,
+      maxResults: Number(form.maxResults) || 5, maxPages: Number(form.maxPages) || 8,
+      yearFrom: outcome.yearFrom ?? toFullYear(form.yearFrom),
+      yearTo: outcome.yearTo ?? toFullYear(form.yearTo),
+      yearLabel: outcome.yearLabel || '', includeUndated: form.includeUndated,
+      refresh: form.refresh, queries: outcome.queries || [] }
+    const filtered = outcome.filteredYears ? `，按年份过滤 ${outcome.filteredYears} 页` : ''
+    message.value = `检索完成：归档 ${outcome.entries.length} 页，复用 ${outcome.reused ?? 0} 页${filtered}，新增入库 ${outcome.imported} 份资料`
     await loadAll()
     if (outcome.imported) emit('changed')
   } catch (e) { failure(e) } finally { busy.value = '' }
@@ -184,13 +213,21 @@ onMounted(loadAll)
             <input v-model.number="form.maxResults" type="number" min="1" max="10" /></label>
           <label class="field"><span>最多归档页数</span>
             <input v-model.number="form.maxPages" type="number" min="1" max="30" /></label>
-          <label class="field"><span>起始年份</span>
-            <input v-model.number="form.afterYear" type="number" min="2000" max="2100" placeholder="不限" /></label>
+          <label class="field"><span>资料起始年份</span>
+            <input v-model.number="form.yearFrom" type="number" min="1" max="2100" placeholder="不限" /></label>
+          <label class="field"><span>资料结束年份</span>
+            <input v-model.number="form.yearTo" type="number" min="1" max="2100" placeholder="不限" /></label>
         </div>
+        <p class="ws-hint" style="margin: 10px 0 0">
+          填 <code>25</code> 或 <code>2025</code> 都表示 2025 年；起止填同一年（如 25 → 25）即只获取该年资料。
+          年份作为检索关键词参与排序，<strong>不使用时间过滤</strong>：能判定年份但落在区间外的页面会被排除，官网大量不标日期的页面默认放行并单独统计。
+        </p>
         <div class="ws-options">
+          <label><input v-model="form.includeUndated" type="checkbox" /> 包含未标注年份的页面（推荐；取消勾选可严格排除）</label>
           <label><input v-model="form.refresh" type="checkbox" /> 忽略归档缓存，重新联网抓取</label>
           <label><input v-model="form.fetchContent" type="checkbox" /> 摘要过短时补抓网页正文</label>
         </div>
+        <p v-if="yearError" class="ws-note bad" style="margin-top: 10px">{{ yearError }}</p>
         <div class="ws-actions">
           <button class="button" :disabled="!!busy || !form.school.trim()" @click="doPreview">
             <Icon name="Eye" :size="16" />{{ busy === 'preview' ? '生成中…' : '预览检索指令' }}</button>
@@ -231,6 +268,12 @@ onMounted(loadAll)
         <span class="section-icon"><Icon name="Terminal" :size="19" /></span>
         <div><h3>展开后的搜索指令</h3><p>每条指令对应一个主题，命中归档缓存时不再联网</p></div>
       </div></div>
+      <p v-if="preview.yearLabel" class="ws-hint">
+        限定资料年份：<strong>{{ preview.yearLabel }}</strong>
+        <template v-if="preview.includeUndated">（未标注年份的页面会放行并在结果中标注）</template>
+        <template v-else>（严格模式：未标注年份的页面会被排除）</template>
+      </p>
+      <p v-if="preview.yearHint" class="ws-hint">{{ preview.yearHint }}</p>
       <div class="ws-queries">
         <div v-for="item in preview.queries" :key="item.queryKey" class="ws-query">
           <span class="ws-query-label">{{ item.label }}<small>{{ item.category }}</small></span>
@@ -243,8 +286,9 @@ onMounted(loadAll)
     <section v-if="result" class="panel">
       <div class="panel-heading"><div class="section-heading">
         <span class="section-icon"><Icon name="FileDown" :size="19" /></span>
-        <div><h3>本次检索结果</h3><p>共 {{ result.entries.length }} 页，复用 {{ result.reused ?? 0 }} 页，新增入库 {{ result.imported }} 份</p></div>
+        <div><h3>本次检索结果</h3><p>共 {{ result.entries.length }} 页，复用 {{ result.reused ?? 0 }} 页，新增入库 {{ result.imported }} 份<span v-if="result.filteredYears">，按年份过滤 {{ result.filteredYears }} 页</span></p></div>
       </div></div>
+      <p v-if="result.yearLabel" class="ws-hint">限定资料年份：{{ result.yearLabel }}；只有该区间的网页会归档入库，入库资料抬头与文件名已标注年份。</p>
       <p v-for="(issue, index) in result.errors || []" :key="index" class="ws-note bad">
         {{ issue.topic || issue.code }}：{{ issue.message }}
       </p>
@@ -254,6 +298,7 @@ onMounted(loadAll)
           <p>{{ entry.snippet || '（无摘要）' }}</p>
           <div class="ws-tags">
             <span>{{ entry.topicLabel }}</span><span>{{ entry.category }}</span>
+            <span v-if="entry.yearLabel">{{ entry.yearLabel }} 年资料</span>
             <span>{{ entry.contentChars }} 字</span>
             <span v-if="entry.reused">归档复用</span>
             <span :class="entry.materialId ? 'done' : ''">{{ entry.materialId ? '已入库' : '待入库' }}</span>
@@ -303,7 +348,7 @@ onMounted(loadAll)
 .web-search { display: flex; flex-direction: column; gap: 18px; }
 .ws-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 18px; }
 .ws-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 16px; }
-.ws-fields.compact { grid-template-columns: repeat(3, 1fr); }
+.ws-fields.compact { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .ws-fields .full { grid-column: 1 / -1; }
 .ws-topics { margin-top: 16px; }
 .ws-label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 13px; }
@@ -347,6 +392,6 @@ onMounted(loadAll)
 .text-button.danger { color: var(--danger); }
 .ws-content { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px;
   line-height: 1.7; background: var(--surface-soft); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-@media (max-width: 1080px) { .ws-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .ws-grid { grid-template-columns: 1fr; } .ws-fields.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .ws-fields, .ws-fields.compact { grid-template-columns: 1fr; } }
 </style>

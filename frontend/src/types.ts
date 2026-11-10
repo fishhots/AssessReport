@@ -110,6 +110,12 @@ export interface WebSearchDirective {
   category?: Category | null
   maxResults?: number
   maxPages?: number
+  /** 资料年份区间（含端点）。两个都填 2025 即只获取 2025 年的资料；留空不限。 */
+  yearFrom?: number | null
+  yearTo?: number | null
+  /** 是否放行无法判定年份的网页，默认 true（官网多不标日期）；取消勾选则严格排除。 */
+  includeUndated?: boolean
+  /** 兼容旧版「起始年份」指令。 */
   afterYear?: number | null
   refresh?: boolean
   fetchContent?: boolean
@@ -120,6 +126,8 @@ export interface WebSearchQuery {
   category: Category
   query: string
   queryKey: string
+  yearFrom?: number | null
+  yearTo?: number | null
 }
 export interface WebSearchError {
   topic?: string
@@ -149,6 +157,9 @@ export interface WebArchiveEntry {
   fetchedAt: string
   materialId: string
   reused?: boolean
+  yearLabel?: string
+  /** 该网页无可判定的发布年份，属于按年份关键词召回的推定资料。 */
+  undated?: boolean
   content?: string
 }
 export interface WebArchiveStats {
@@ -162,7 +173,12 @@ export interface WebSearchPreview {
   site: string
   maxResults: number
   maxPages: number
-  afterYear: number | null
+  afterYear?: number | null
+  yearFrom?: number | null
+  yearTo?: number | null
+  yearLabel?: string
+  includeUndated?: boolean
+  yearHint?: string
   refresh: boolean
   queries: WebSearchQuery[]
 }
@@ -173,6 +189,14 @@ export interface WebSearchRunResult {
   entries: WebArchiveEntry[]
   reused?: number
   count?: number
+  /** 因能判定年份且落在区间外而被排除的网页数。 */
+  filteredYears?: number
+  /** 无发布年份、按年份关键词召回并放行的网页数（推定资料）。 */
+  undated?: number
+  yearFrom?: number | null
+  yearTo?: number | null
+  yearLabel?: string
+  includeUndated?: boolean
   errors?: WebSearchError[]
   materials: Material[]
   imported: number

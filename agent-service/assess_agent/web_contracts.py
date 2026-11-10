@@ -8,11 +8,14 @@ import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 QUERY_LIMIT = 128
 CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# 检索式策略版本：改变搜索式生成规则时递增，使旧批次归档缓存自动失效。
+# v2 = 移除 after:/before: 时间操作符，年份改为检索关键词 + 结果侧判定。
+QUERY_STRATEGY = "v2"
 
 # 定向检索模板：一个 topic 对应一条可复现、可审计的搜索指令。
 TOPIC_TEMPLATES = {
@@ -98,20 +101,111 @@ def host_allowed(url: str, site: str) -> bool:
     return host == site or host.endswith("." + site)
 
 
-def compose_query(school: str, terms: str, keywords: str, site: str, after_year: int | None) -> str:
-    """构造不超过 128 字符的搜索式，优先保留学校名与 site: 限定。"""
+YEAR_PATTERN = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+# 高校 CMS 常见 /2025/0512/、t20250512_123.html、/info/202505.htm 这类紧凑日期。
+# 只认「恰好 8 位且月份/日期合法」或「4 位年 + 2 位月」，并要求前后不是数字，
+# 避免把 12 位的文章 ID（如 202405150001）误判成 2024 年。
+COMPACT_YEAR_PATTERN = re.compile(
+    r"(?<!\d)(20\d{2})[-/.]?(0[1-9]|1[0-2])(?:(0[1-9]|[12]\d|3[01]))?(?!\d)")
+
+
+def normalize_year(value) -> int | None:
+    """把 2025 / "2025" / 25 / "25" 统一成四位年份；非法值返回 None。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.isdigit():
+            return None
+        value = int(value)
+    if not isinstance(value, int):
+        return None
+    if 0 <= value <= 99:
+        value += 2000
+    return value if 2000 <= value <= 2100 else None
+
+
+def page_years(*, published: str = "", title: str = "", url: str = "") -> list[int]:
+    """从发布时间、标题和 URL 中抽取可判定的年份。
+
+    不用正文/摘要作依据：官网页面常同时提到规划起止年、往届数据，容易误判。
+    正则带数字边界，避免把 20250315 这类长数字误当年份。
+    """
+    found: set[int] = set()
+    for text in (published, title, url):
+        if not isinstance(text, str):
+            continue
+        for match in YEAR_PATTERN.finditer(text):
+            year = int(match.group())
+            if 2000 <= year <= 2100:
+                found.add(year)
+        # 补上 20250512 / 2025-05-12 / 2025/05 这类紧凑写法：YEAR_PATTERN 因
+        # 「年份后紧跟数字」会漏掉，但它们恰恰是高校官网最常见的日期目录格式。
+        for match in COMPACT_YEAR_PATTERN.finditer(text):
+            year = int(match.group(1))
+            if 2000 <= year <= 2100:
+                found.add(year)
+    return sorted(found)
+
+
+def year_allowed(years, year_from: int | None, year_to: int | None,
+                 include_undated: bool = True) -> bool:
+    """判定网页是否落在年份区间内；这是「只获取指定年份资料」的硬约束。
+
+    未限定年份时一律放行；能判定年份但全部落在区间外时丢弃（真正保证不混入
+    其他年度）；完全无法判定年份时默认**放行**——官网页面 date 常为 null、标题
+    与 URL 也常不含年份，若默认丢弃会把目标年度的讲话/规划整批误杀。这类页面
+    是带着年份关键词的搜索式召回的，检索结果会单独统计未标注年份的数量；
+    需要绝对严格时传 include_undated=False 排除。
+    """
+    if not year_from and not year_to:
+        return True
+    if not years:
+        return bool(include_undated)
+    low = year_from or 2000
+    high = year_to or 2100
+    return any(low <= year <= high for year in years)
+
+
+def year_terms(year_from: int | None, year_to: int | None) -> str:
+    """把年份区间转成检索关键词，而不是 after:/before: 时间操作符。
+
+    原因：DeepSeek 的 after:/before: 按网页发布时间过滤，而官方 results.date
+    「未知时为 null」——学校官网的领导讲话、规划页面绝大多数没有机器可读的
+    发布时间，带时间操作符会被搜索引擎整批排除；且 after:2025 语义是「2025 年
+    之后」，单年区间 after:2025 before:2026 会把 2025 当年内容一起挤掉。
+    """
+    if not year_from and not year_to:
+        return ""
+    low = year_from or year_to
+    high = year_to or year_from
+    if low == high:
+        return str(low)
+    if high - low <= 3:
+        return " ".join(str(year) for year in range(low, high + 1))
+    return f"{low} {high}"
+
+
+def compose_query(school: str, terms: str, keywords: str, site: str,
+                  year_from: int | None = None, year_to: int | None = None) -> str:
+    """构造不超过 128 字符的搜索式，优先保留学校名、年份词与 site: 限定。
+
+    年份只作为检索关键词参与相关性排序，不做日期硬过滤；年份的精确性由
+    year_allowed 对每条结果二次校验保证（排除明确落在区间外的页面）。
+    """
     operators = ""
     if site:
         operators += f" site:{site}"
     operators += " lang:zh"
-    if after_year:
-        operators += f" after:{after_year}"
     budget = QUERY_LIMIT - len(operators)
     school = clean_text(school, 60)
-    body = " ".join(part for part in (school, clean_text(terms, 120), clean_text(keywords, 120)) if part).strip()
+    years = year_terms(year_from, year_to)
+    body = " ".join(part for part in (school, years, clean_text(terms, 120), clean_text(keywords, 120)) if part).strip()
     if len(body) <= budget:
         return (body + operators).strip() or school
-    head = school[:max(1, min(len(school), budget // 2))]
+    # 超预算时学校名与年份词属于「定位信息」，优先保留，再逐词补主题词。
+    head = " ".join(part for part in (school, years) if part).strip()
+    head = head[:max(1, min(len(head), budget // 2))]
     remaining = budget - len(head) - 1
     picked = []
     for term in (clean_text(terms, 120) + " " + clean_text(keywords, 120)).split():
@@ -134,9 +228,39 @@ class WebSearchDirective(BaseModel):
     category: Literal["DATA", "SPEECH", "REFERENCE"] | None = None
     max_results: int = Field(default=5, ge=1, le=10)
     max_pages: int = Field(default=8, ge=1, le=30)
+    # 年份区间：year_from ~ year_to（含端点）。两个都填同一个值即「只要这一年」。
+    year_from: int | None = Field(default=None, ge=2000, le=2100)
+    year_to: int | None = Field(default=None, ge=2000, le=2100)
+    # 官网页面常不标发布时间，默认放行无法判定年份的页面（结果里单独计数）；
+    # 取消勾选则严格排除，只保留能判定年份且落在区间内的页面。
+    include_undated: bool = True
+    # 兼容旧版「起始年份」指令；等价于只设 year_from。
     after_year: int | None = Field(default=None, ge=2000, le=2100)
     refresh: bool = False
     fetch_content: bool = True
+
+    @field_validator("year_from", "year_to", "after_year", mode="before")
+    @classmethod
+    def widen_short_year(cls, value):
+        """允许填 25 这样的两位简写；非法值给出可读的 422 提示。"""
+        if value is None or value == "":
+            return None
+        year = normalize_year(value)
+        if year is None:
+            raise ValueError("年份需为 2000–2100 之间的四位年份，或 25 这样的两位简写")
+        return year
+
+    @model_validator(mode="after")
+    def settle_year_range(self):
+        low, high = self.year_from, self.year_to
+        if low is None and high is None and self.after_year is not None:
+            low = self.after_year
+        if low is None and high is not None:
+            low = high
+        if low is not None and high is not None and low > high:
+            raise ValueError("起始年份不能大于结束年份")
+        self.year_from, self.year_to = low, high
+        return self
 
     @field_validator("school", "keywords")
     @classmethod
@@ -169,17 +293,32 @@ class WebSearchDirective(BaseModel):
     def category_for(self, topic: str) -> str:
         return self.category or TOPIC_TEMPLATES[topic]["category"]
 
+    def year_label(self) -> str:
+        """给界面与入库抬头用的可读年份区间。"""
+        low, high = self.year_from, self.year_to
+        if not low and not high:
+            return ""
+        if low and high:
+            return str(low) if low == high else f"{low}–{high}"
+        return f"{low} 年起" if low else f"截至 {high} 年"
+
     def query_key(self, topic: str) -> str:
-        seed = "|".join((self.school.strip().lower(), self.site, topic,
-                         self.keywords.strip(), str(self.after_year or ""), str(self.max_results)))
+        # 年份区间与检索式策略都进入批次键：不同区间、不同策略的归档互不复用，
+        # 升级搜索式后旧的空批次/错误结果不会继续命中缓存。
+        seed = "|".join((QUERY_STRATEGY, self.school.strip().lower(), self.site, topic,
+                         self.keywords.strip(), str(self.after_year or ""),
+                         str(self.year_from or ""), str(self.year_to or ""),
+                         str(self.include_undated), str(self.max_results)))
         return sha256(seed.encode()).hexdigest()[:20]
 
     def queries(self) -> list[dict]:
         output = []
         for topic in self.topics:
             template = TOPIC_TEMPLATES[topic]
-            query = compose_query(self.school, template["terms"], self.keywords, self.site, self.after_year)
+            query = compose_query(self.school, template["terms"], self.keywords,
+                                  self.site, self.year_from, self.year_to)
             output.append({"topic": topic, "label": template["label"],
                            "category": self.category_for(topic), "query": query,
-                           "queryKey": self.query_key(topic)})
+                           "queryKey": self.query_key(topic),
+                           "yearFrom": self.year_from, "yearTo": self.year_to})
         return output

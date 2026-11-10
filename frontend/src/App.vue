@@ -71,6 +71,18 @@ const customTopicTitle = ref('')
 const customTopicRequirements = ref('')
 const webSearchAuto = ref(false)
 const webSearchSite = ref('')
+const webSearchYearFrom = ref<number | null>(null)
+const webSearchYearTo = ref<number | null>(null)
+const webSearchIncludeUndated = ref(false)
+/** 联网检索年份输入允许 25 或 2025 两种写法。 */
+function fullYear(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  const year = Math.trunc(n)
+  if (year >= 1 && year <= 99) return 2000 + year
+  return year >= 2000 && year <= 2100 ? year : null
+}
 const activeReport = ref<ReportTask | null>(null)
 const isLegacyReport = (task: ReportTask) => task.status === 'SUCCEEDED' && task.steps.some((step) => step.name === '深度诊断')
 const activeOutputs = computed(() => activeReport.value && isLegacyReport(activeReport.value)
@@ -220,6 +232,9 @@ async function load() {
         if (typeof draft.customTopicRequirements === 'string') customTopicRequirements.value = draft.customTopicRequirements
         webSearchAuto.value = draft.webSearchAuto === true
         if (typeof draft.webSearchSite === 'string') webSearchSite.value = draft.webSearchSite
+        webSearchYearFrom.value = typeof draft.webSearchYearFrom === 'number' ? draft.webSearchYearFrom : null
+        webSearchYearTo.value = typeof draft.webSearchYearTo === 'number' ? draft.webSearchYearTo : null
+        webSearchIncludeUndated.value = draft.webSearchIncludeUndated === true
         if (Array.isArray(draft.selectedIds))
           selectedIds.value = draft.selectedIds.filter((id: string) => nextMaterials.some((m) => m.id === id))
         chapters.value =
@@ -255,6 +270,9 @@ function saveDraft(showToast = true) {
         customTopicRequirements: customTopicRequirements.value,
         webSearchAuto: webSearchAuto.value,
         webSearchSite: webSearchSite.value,
+        webSearchYearFrom: webSearchYearFrom.value,
+        webSearchYearTo: webSearchYearTo.value,
+        webSearchIncludeUndated: webSearchIncludeUndated.value,
         selectedIds: selectedIds.value,
       }),
     )
@@ -264,7 +282,7 @@ function saveDraft(showToast = true) {
   }
 }
 watch(
-  [school, year, modelId, chapters, instructions, selectedIds, customTopicEnabled, customTopicTitle, customTopicRequirements, webSearchAuto, webSearchSite],
+  [school, year, modelId, chapters, instructions, selectedIds, customTopicEnabled, customTopicTitle, customTopicRequirements, webSearchAuto, webSearchSite, webSearchYearFrom, webSearchYearTo, webSearchIncludeUndated],
   () => {
     if (!loading.value && catalog.value) saveDraft(false)
   },
@@ -332,6 +350,12 @@ async function deleteMaterial() {
 }
 async function createReport() {
   if (!ready.value || saving.value || uploadBusy.value) return
+  const fromYear = fullYear(webSearchYearFrom.value)
+  const toYear = fullYear(webSearchYearTo.value)
+  if (webSearchAuto.value && fromYear && toYear && fromYear > toYear) {
+    notify('联网检索的起始年份不能大于结束年份', true)
+    return
+  }
   saving.value = true
   try {
     const report = await api.createReport({
@@ -350,6 +374,9 @@ async function createReport() {
         topics: ['leadership_speech', 'strategic_plan', 'school_profile'],
         maxResults: 4,
         maxPages: 8,
+        yearFrom: fromYear,
+        yearTo: toYear,
+        includeUndated: webSearchIncludeUndated.value,
         refresh: false,
         fetchContent: true,
       } : null,
@@ -524,6 +551,9 @@ function clearWorkspaceState() {
   customTopicRequirements.value = ''
   webSearchAuto.value = false
   webSearchSite.value = ''
+  webSearchYearFrom.value = null
+  webSearchYearTo.value = null
+  webSearchIncludeUndated.value = false
   modelTestResults.value = {}
   editingModel.value = null
   deletedReportIds.clear()
@@ -907,8 +937,17 @@ onUnmounted(() => {
                     <label class="field full"><span>学校官网域名（推荐填写）</span>
                       <input v-model="webSearchSite" maxlength="200" placeholder="例如：bistu.edu.cn，留空则不限定站点" />
                     </label>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px">
+                      <label class="field" style="flex: 1; min-width: 140px"><span>资料起始年份</span>
+                        <input v-model.number="webSearchYearFrom" type="number" min="1" max="2100" placeholder="不限" /></label>
+                      <label class="field" style="flex: 1; min-width: 140px"><span>资料结束年份</span>
+                        <input v-model.number="webSearchYearTo" type="number" min="1" max="2100" placeholder="不限" /></label>
+                    </div>
+                    <label style="display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text-secondary); font-size: 13px">
+                      <input v-model="webSearchIncludeUndated" type="checkbox" /> 包含未标注年份的页面（默认排除）
+                    </label>
                     <p style="color: var(--muted); font-size: 12px; line-height: 1.6; margin: 10px 0 0">
-                      检索结果会作为可引用证据加入本次任务，同时自动登记到资料库供以后复用；也可在「联网检索」页面单独执行和管理。
+                      起止填同一年（如 25 → 25）即只获取该年资料，25 与 2025 等价。检索结果会作为可引用证据加入本次任务，同时自动登记到资料库供以后复用；也可在「联网检索」页面单独执行和管理。
                     </p>
                   </template>
                 </section>

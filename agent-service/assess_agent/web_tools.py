@@ -14,7 +14,17 @@ from langchain.tools import tool
 
 from .errors import AgentError
 from .web_archive import entry_evidence
-from .web_contracts import TOPIC_TEMPLATES, WebSearchDirective, normalize_site
+from .web_contracts import TOPIC_TEMPLATES, WebSearchDirective, normalize_site, normalize_year
+
+
+def optional_year(value):
+    """工具参数里的年份：0/空表示不限，25 这类简写补成 2025。"""
+    if value in (None, "", 0):
+        return None
+    year = normalize_year(value)
+    if year is None:
+        raise AgentError("WEB_SEARCH_DIRECTIVE", "年份需为 2000–2100 的四位年份或 25 这样的简写")
+    return year
 
 
 def inject_web_evidence(store, entries, category="REFERENCE", max_pages=8) -> list[str]:
@@ -68,14 +78,17 @@ def web_tools(store, service, school: str, year: int):
         return {"topics": [{"id": key, "label": value["label"], "category": value["category"],
                             "terms": value["terms"]} for key, value in TOPIC_TEMPLATES.items()],
                 "school": school, "year": year,
-                "usage": "用 search_school_web 指定 topic、官网域名 site 与补充关键词；结果会自动归档并生成可引用证据 ID"}
+                "usage": "用 search_school_web 指定 topic、官网域名 site、补充关键词与 year_from/year_to 年份区间；结果会自动归档并生成可引用证据 ID"}
 
     @tool
     def search_school_web(topic: str = "leadership_speech", site: str = "", keywords: str = "",
-                          max_results: int = 3, refresh: bool = False) -> dict:
+                          max_results: int = 3, year_from: int = 0, year_to: int = 0,
+                          refresh: bool = False) -> dict:
         """定向检索特定学校的官网公开信息，如领导讲话、战略规划、办学定位、人才培养、质量报告。
         topic 取值先用 list_web_search_topics 查询；site 填学校官网域名（如 bistu.edu.cn）可确保结果只来自官网；
         keywords 补充更具体的要求；max_results 为 1–5；refresh=true 忽略归档缓存重新联网。
+        year_from/year_to 指定资料年份区间（含端点，可用 25 这样的简写）；例如两个都填 2025 就只归档 2025 年的网页，
+        两个都填 0 表示不限年份。无法判定年份的页面会被排除，避免混入其他年度资料。
         结果自动归档并形成 evidenceIds，可用 read_evidence 读取正文后写入报告。
         """
         def execute():
@@ -85,7 +98,9 @@ def web_tools(store, service, school: str, year: int):
                 "enabled": True, "school": school, "site": normalize_site(site),
                 "topics": [topic], "keywords": keywords,
                 "maxResults": max(1, min(int(max_results), 5)), "maxPages": max(1, min(int(max_results), 5)),
-                "afterYear": None, "refresh": bool(refresh), "fetchContent": True,
+                "yearFrom": optional_year(year_from), "yearTo": optional_year(year_to),
+                "includeUndated": False, "afterYear": None,
+                "refresh": bool(refresh), "fetchContent": True,
             })
             result = service.run(directive)
             briefs = []

@@ -18,7 +18,7 @@ import httpx
 from .errors import AgentError
 from .web_archive import WebArchive
 from .web_contracts import (QUERY_LIMIT, TOPIC_TEMPLATES, WebSearchDirective, clean_text,
-                            host_allowed, host_of, safe_url)
+                            host_allowed, host_of, page_years, safe_url, year_allowed)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 MIN_USEFUL_CONTENT = 400
@@ -135,9 +135,32 @@ class WebSearchService:
 
     def preview(self, directive: WebSearchDirective) -> dict:
         specs = directive.queries()
+        hint = ""
+        if directive.year_from or directive.year_to:
+            hint = (f"年份 {directive.year_label()} 作为检索关键词参与排序，不使用 after:/before: 时间过滤；"
+                    "能判定年份但落在区间外的页面会被排除，未标注年份的页面默认放行并单独计数。")
         return {"school": directive.school, "site": directive.site,
                 "maxResults": directive.max_results, "maxPages": min(directive.max_pages, self.settings.web_search_max_pages),
-                "afterYear": directive.after_year, "refresh": directive.refresh, "queries": specs}
+                "afterYear": directive.after_year,
+                "yearFrom": directive.year_from, "yearTo": directive.year_to,
+                "yearLabel": directive.year_label(), "includeUndated": directive.include_undated,
+                "yearHint": hint, "refresh": directive.refresh, "queries": specs}
+
+    @staticmethod
+    def _years_of(entry: dict) -> list[int]:
+        """归档条目（camelCase）与原始搜索结果（snake_case）都能判定年份。
+
+        只用发布时间/标题/URL，不用摘要与正文：2025 年的讲话常回顾「2024 年
+        工作」，用摘要判定会把目标年度页面误判成区间外并丢弃，反而加重误杀。
+        无法判定年份的页面由 include_undated 决定放行，并在结果里单独计数。
+        """
+        return page_years(published=str(entry.get("publishedAt") or entry.get("date") or ""),
+                          title=str(entry.get("title") or ""), url=str(entry.get("url") or ""))
+
+    @staticmethod
+    def _year_allowed(entry: dict, directive: WebSearchDirective) -> bool:
+        return year_allowed(WebSearchService._years_of(entry),
+                            directive.year_from, directive.year_to, directive.include_undated)
 
     def _materialize(self, result: dict, spec: dict, directive: WebSearchDirective) -> dict | None:
         url = safe_url(result.get("url"))
@@ -184,6 +207,8 @@ class WebSearchService:
         page_budget = min(directive.max_pages, self.settings.web_search_max_pages)
         entries, errors = {}, []
         reused = 0
+        filtered_years = 0
+        undated = 0
         seen_urls = set()
         for spec in specs:
             if len(entries) >= page_budget:
@@ -191,13 +216,19 @@ class WebSearchService:
             cached = self.archive.recent(spec["queryKey"], self.settings.web_search_cache_days) if (
                 use_cache and not directive.refresh) else []
             if cached:
+                kept = 0
                 for entry in cached:
+                    if not self._year_allowed(entry, directive):
+                        filtered_years += 1
+                        continue
                     entries[entry["id"]] = {**entry, "reused": True}
-                reused += len(cached)
+                    kept += 1
+                reused += kept
                 continue
             try:
                 results = self.client.search(spec["query"], count=directive.max_results,
-                                             need_content=True, ori_question=f"检索{directive.school}官网公开信息：{spec['label']}")
+                                             need_content=True,
+                                             ori_question=f"检索{directive.school}官网{directive.year_label()}公开信息：{spec['label']}")
             except AgentError as error:
                 errors.append({"topic": spec["topic"], "query": spec["query"],
                                "code": error.code, "message": error.message})
@@ -212,6 +243,10 @@ class WebSearchService:
                 if not url or url in seen_urls or not host_allowed(url, directive.site):
                     continue
                 seen_urls.add(url)
+                # 年份硬过滤必须早于 Fetch：不为区间外的页面多产生一次计费请求。
+                if not self._year_allowed(result, directive):
+                    filtered_years += 1
+                    continue
                 try:
                     entry = self._materialize(result, spec, directive)
                 except AgentError as error:
@@ -224,9 +259,17 @@ class WebSearchService:
             self.archive.record_batch(spec["queryKey"], batch_ids)
         result_entries = sorted(entries.values(), key=lambda item: (
             item.get("reused", False), -(item.get("authority") or 0), -(item.get("rerankScore") or 0)))
+        # 明确落在区间外的页面已丢弃；这里统计「无年份依据、按年份关键词召回」的页面，
+        # 让界面如实提示哪些资料属于推定，便于用户决定是否改走严格模式。
+        undated = sum(1 for item in result_entries
+                      if (directive.year_from or directive.year_to) and not self._years_of(item))
+        for item in result_entries:
+            item["undated"] = bool((directive.year_from or directive.year_to) and not self._years_of(item))
         return {"school": directive.school, "site": directive.site, "queries": specs,
                 "entries": result_entries, "reused": reused, "errors": errors,
-                "count": len(result_entries)}
+                "count": len(result_entries), "filteredYears": filtered_years,
+                "undated": undated, "yearFrom": directive.year_from, "yearTo": directive.year_to,
+                "yearLabel": directive.year_label(), "includeUndated": directive.include_undated}
 
     def fetch_page(self, url: str, *, school: str, topic: str = "custom",
                    category: str = "REFERENCE") -> dict:

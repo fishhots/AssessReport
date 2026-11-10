@@ -67,6 +67,11 @@ public class WebSearchController {
 
     private Map<String, Object> materialize(Map<String, Object> outcome) throws IOException {
         List<Map<String, Object>> pages = pages(outcome);
+        // 把本次检索的年份区间写进资料抬头与文件名，便于以后在资料库辨认年度。
+        Object yearLabel = outcome == null ? null : outcome.get("yearLabel");
+        if (yearLabel != null && !String.valueOf(yearLabel).isBlank()) {
+            for (Map<String, Object> page : pages) page.putIfAbsent("yearLabel", String.valueOf(yearLabel));
+        }
         List<Map<String, Object>> fresh = new ArrayList<>();
         for (Map<String, Object> page : pages) {
             Object materialId = page.get("materialId");
