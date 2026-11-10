@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     update_word_fields: bool = True
     max_source_chars: int = Field(default=8_000_000, ge=1000)
     max_table_rows: int = Field(default=100000, ge=100)
+    # 联网搜索（DeepSeek Search / Fetch）。密钥默认复用模型设置里的 DeepSeek Key。
+    web_search_enabled: bool = False
+    web_search_api_key: SecretStr = SecretStr("")
+    web_search_base_url: str = "https://api.deepseek.com"
+    web_search_timeout: int = Field(default=20, ge=5, le=120)
+    web_search_cache_days: int = Field(default=30, ge=0, le=365)
+    web_search_max_pages: int = Field(default=12, ge=1, le=30)
+    web_search_max_page_chars: int = Field(default=40000, ge=2000, le=200000)
+    web_search_default_school: str = ""
 
     def provider_config(self, provider: str) -> dict:
         from .model_config import ModelConfigStore

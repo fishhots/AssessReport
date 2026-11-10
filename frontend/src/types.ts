@@ -74,8 +74,110 @@ export interface ReportTask {
   createdAt: string
   steps: { name: string; status: string }[]
   message: string
+  webSearch?: WebSearchDirective | null
 }
 export type ReportInput = Pick<
   ReportTask,
-  'school' | 'year' | 'modelId' | 'templateId' | 'materialIds' | 'chapters' | 'instructions' | 'customTopic'
+  'school' | 'year' | 'modelId' | 'templateId' | 'materialIds' | 'chapters' | 'instructions' | 'customTopic' | 'webSearch'
 >
+
+export interface WebSearchTopic {
+  id: string
+  label: string
+  category: Category
+  terms: string
+}
+export interface WebSearchStatus {
+  provider: string
+  configured: boolean
+  keySource: string
+  baseUrl: string
+  searchEndpoint: string
+  fetchEndpoint: string
+  enabled: boolean
+  cacheDays: number
+  maxPages: number
+  topics: WebSearchTopic[]
+  archive: { total: number; pending: number; schools: string[]; lastFetchedAt: string | null }
+  hint: string
+}
+export interface WebSearchDirective {
+  enabled?: boolean
+  school: string
+  site?: string
+  topics: string[]
+  keywords?: string
+  category?: Category | null
+  maxResults?: number
+  maxPages?: number
+  afterYear?: number | null
+  refresh?: boolean
+  fetchContent?: boolean
+}
+export interface WebSearchQuery {
+  topic: string
+  label: string
+  category: Category
+  query: string
+  queryKey: string
+}
+export interface WebSearchError {
+  topic?: string
+  query?: string
+  code: string
+  message: string
+}
+export interface WebArchiveEntry {
+  id: string
+  url: string
+  title: string
+  siteName: string
+  host: string
+  school: string
+  site: string
+  topic: string
+  topicLabel: string
+  query: string
+  queryKey: string
+  category: Category
+  snippet: string
+  contentChars: number
+  source: string
+  authority: number | null
+  rerankScore: number | null
+  publishedAt: string | null
+  fetchedAt: string
+  materialId: string
+  reused?: boolean
+  content?: string
+}
+export interface WebArchiveStats {
+  total: number
+  pending: number
+  schools: string[]
+  lastFetchedAt: string | null
+}
+export interface WebSearchPreview {
+  school: string
+  site: string
+  maxResults: number
+  maxPages: number
+  afterYear: number | null
+  refresh: boolean
+  queries: WebSearchQuery[]
+}
+export interface WebSearchRunResult {
+  school?: string
+  site?: string
+  queries?: WebSearchQuery[]
+  entries: WebArchiveEntry[]
+  reused?: number
+  count?: number
+  errors?: WebSearchError[]
+  materials: Material[]
+  imported: number
+}
+export interface WebArchiveList {
+  entries: WebArchiveEntry[]
+  stats: WebArchiveStats
+}

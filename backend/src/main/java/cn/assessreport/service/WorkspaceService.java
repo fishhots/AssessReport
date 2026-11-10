@@ -11,6 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
@@ -29,6 +30,8 @@ public class WorkspaceService {
         State state;
         UserWorkspace(Path root,State state) {this.root=root;this.state=state;}
     }
+    /** 归档网页入库结果：材料清单 + 需要回写给智能体归档库的入库回执。 */
+    public record ImportResult(List<Material> materials, List<Map<String,String>> receipts) {}
 
     public WorkspaceService(@Value("${app.storage-directory}") String directory, ObjectMapper mapper,
             CatalogService catalog, AgentGateway agent, UserContext users) throws IOException {
@@ -95,6 +98,66 @@ public class WorkspaceService {
             throw failure;
         }
     }
+
+    /** 把智能体归档的网页正文写成资料文件并登记为 Material。
+     *  Python 侧 uploads 在 Docker 中是只读挂载，索引只能由本服务写入。 */
+    public synchronized ImportResult importWebPages(List<Map<String,Object>> pages) throws IOException {
+        if (pages == null || pages.isEmpty()) return new ImportResult(List.of(), List.of());
+        if (pages.size() > 30) throw new IllegalArgumentException("单次最多入库 30 份联网资料");
+        List<Material> added = new ArrayList<>();
+        List<Map<String,String>> receipts = new ArrayList<>();
+        try {
+            for (Map<String,Object> page : pages) {
+                if (page == null) continue;
+                Object raw = page.get("content");
+                String content = raw == null ? "" : raw.toString();
+                if (content.isBlank()) continue;
+                String entryId = archiveText(page.get("id"), 64);
+                String title = archiveText(page.get("title"), 120);
+                String school = archiveText(page.get("school"), 60);
+                String label = archiveText(page.get("topicLabel"), 40);
+                String url = archiveText(page.get("url"), 500);
+                String fetchedAt = archiveText(page.get("fetchedAt"), 60);
+                Category category = archiveCategory(page.get("category"));
+                String header = "来源：学校官网公开信息\n标题：" + title + "\n网址：" + url
+                        + "\n检索主题：" + label + "\n抓取时间：" + fetchedAt + "\n\n";
+                byte[] bytes = (header + content).getBytes(StandardCharsets.UTF_8);
+                Material material = new Material(UUID.randomUUID().toString(),
+                        archiveName(school, label, title), bytes.length, category, Instant.now());
+                Files.write(scope().root.resolve("uploads").resolve(material.id()), bytes);
+                added.add(material);
+                if (!entryId.isEmpty()) receipts.add(Map.of("entryId", entryId, "materialId", material.id()));
+            }
+            if (!added.isEmpty()) {
+                List<Material> all = new ArrayList<>(added);
+                all.addAll(scope().state.materials());
+                save(new State(List.copyOf(all), scope().state.reports()));
+            }
+            return new ImportResult(List.copyOf(added), List.copyOf(receipts));
+        } catch (IOException | RuntimeException failure) {
+            for (Material material : added) {
+                try { Files.deleteIfExists(scope().root.resolve("uploads").resolve(material.id())); }
+                catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+    }
+    private static String archiveText(Object value, int limit) {
+        String text = value == null ? "" : value.toString().replaceAll("[\\p{Cntrl}]", "").trim();
+        return text.length() > limit ? text.substring(0, limit) : text;
+    }
+    private static Category archiveCategory(Object value) {
+        try { return Category.valueOf(String.valueOf(value).trim().toUpperCase(Locale.ROOT)); }
+        catch (RuntimeException ignored) { return Category.REFERENCE; }
+    }
+    private static String archiveName(String school, String label, String title) {
+        String base = (school + "_" + label + "_" + title).replaceAll("^_+|_+$", "");
+        base = base.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("\\s+", " ").trim();
+        if (base.isBlank()) base = "学校官网资料";
+        if (base.length() > 100) base = base.substring(0, 100);
+        return base + ".txt";
+    }
+
     public synchronized void delete(String id) throws IOException {
         material(id);
         if (scope().state.reports().stream().anyMatch(r -> r.materialIds().contains(id)))
@@ -109,7 +172,7 @@ public class WorkspaceService {
         input.materialIds().forEach(this::material);
         ReportTask report = new ReportTask(UUID.randomUUID().toString(), input.school().trim() + input.year() + "届" + template.name(),
             input.school().trim(), input.year(), input.modelId(), input.templateId(), List.copyOf(new LinkedHashSet<>(input.materialIds())),
-            template.chapters().stream().filter(input.chapters()::contains).toList(), Objects.requireNonNullElse(input.instructions(), ""), agent.initialStatus(), Instant.now(), agent.initialSteps(), agent.statusMessage(), input.customTopic());
+            template.chapters().stream().filter(input.chapters()::contains).toList(), Objects.requireNonNullElse(input.instructions(), ""), agent.initialStatus(), Instant.now(), agent.initialSteps(), agent.statusMessage(), input.customTopic(), input.webSearch());
         List<ReportTask> reports = new ArrayList<>(List.of(report));
         reports.addAll(scope().state.reports());
         save(new State(scope().state.materials(), List.copyOf(reports)));
@@ -141,7 +204,7 @@ public class WorkspaceService {
                 sources.add(new AgentGateway.Source(material.id(), material.name(), material.category(), text));
             }
             job = agent.submit(new AgentGateway.Request(report.id(), report.school(), report.year(), report.modelId(), report.templateId(),
-                report.chapters(), sources, report.instructions(), report.customTopic()));
+                report.chapters(), sources, report.instructions(), report.customTopic(), report.webSearch()));
         }
         return update(job);
     }
@@ -172,7 +235,7 @@ public class WorkspaceService {
         if (job.status() == null || job.steps() == null || job.message() == null)
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "智能体返回了无效的任务状态");
         ReportTask after = new ReportTask(before.id(), before.title(), before.school(), before.year(), before.modelId(), before.templateId(),
-            before.materialIds(), before.chapters(), before.instructions(), job.status(), before.createdAt(), job.steps(), job.message(), before.customTopic());
+            before.materialIds(), before.chapters(), before.instructions(), job.status(), before.createdAt(), job.steps(), job.message(), before.customTopic(), before.webSearch());
         if (!after.equals(before)) save(new State(scope().state.materials(), scope().state.reports().stream().map(r -> r.id().equals(after.id()) ? after : r).toList()));
         return after;
     }

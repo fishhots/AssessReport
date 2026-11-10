@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.constraints.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /** Spring Boot 与独立 LangChain 执行服务之间的任务契约。 */
 public interface AgentGateway {
@@ -42,7 +44,8 @@ public interface AgentGateway {
     record Job(String taskId, String status, List<Step> steps, String message) {}
     record Source(String id, String name, Category category, String extractedText) {}
     record Request(String taskId, String school, int year, String modelId, String templateId,
-                   List<String> chapters, List<Source> materials, String instructions, CustomTopic customTopic) {}
+                   List<String> chapters, List<Source> materials, String instructions,
+                   CustomTopic customTopic, Object webSearch) {}
     List<Provider> providers();
     List<Job> jobs();
     Job submit(Request request);
@@ -54,4 +57,19 @@ public interface AgentGateway {
     ModelConfig modelConfig(String provider);
     default ModelConfig modelConfig(String provider, String channel) { return modelConfig(provider); }
     ModelConfig saveModelConfig(String provider, ModelConfigInput config);
+
+    // 联网搜索与归档（Python 内部 API 的网关契约）。默认实现让「仅准备」模式直接返回 503。
+    default Map<String, Object> webSearchStatus() { throw webSearchUnavailable(); }
+    default Map<String, Object> webSearchPreview(Object directive) { throw webSearchUnavailable(); }
+    default Map<String, Object> webSearchRun(Object directive) { throw webSearchUnavailable(); }
+    default Map<String, Object> webSearchTest() { throw webSearchUnavailable(); }
+    default Map<String, Object> webArchive(String school, String topic, int limit) { throw webSearchUnavailable(); }
+    default Map<String, Object> webArchivePending(int limit) { throw webSearchUnavailable(); }
+    default Map<String, Object> webArchiveEntry(String id) { throw webSearchUnavailable(); }
+    default void webArchiveMaterialized(Map<String, Object> payload) { throw webSearchUnavailable(); }
+    default void webArchiveDelete(String id) { throw webSearchUnavailable(); }
+
+    private static ResponseStatusException webSearchUnavailable() {
+        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "智能体服务未启动");
+    }
 }

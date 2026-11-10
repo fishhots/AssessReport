@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from .settings import CHAPTERS, PROVIDERS
+from .web_contracts import WebSearchDirective
 
 
 class ApiModel(BaseModel):
@@ -41,6 +42,8 @@ class JobRequest(ApiModel):
     materials: list[MaterialInput] = Field(min_length=1, max_length=100)
     instructions: str = Field(default="", max_length=4000)
     custom_topic: CustomTopic | None = None
+    # 结构化联网检索指令。为 None 或 enabled=false 时完全不改变原有取证行为。
+    web_search: WebSearchDirective | None = None
 
     def extension_titles(self) -> list[str]:
         titles = ["第九章 个性化报告"]

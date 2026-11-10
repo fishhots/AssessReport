@@ -61,6 +61,10 @@ services:
       ASSESS_ANALYSIS_OUTPUT_TOKENS: "${ASSESS_ANALYSIS_OUTPUT_TOKENS:-16000}"
       ASSESS_MAX_OUTPUT_TOKENS: "${ASSESS_MAX_OUTPUT_TOKENS:-12000}"
       ASSESS_UPDATE_WORD_FIELDS: "false"
+      # 联网搜索：密钥默认复用网页「模型设置」中的 DeepSeek Key，无需在此填写。
+      ASSESS_WEB_SEARCH_ENABLED: "${ASSESS_WEB_SEARCH_ENABLED:-false}"
+      ASSESS_WEB_SEARCH_API_KEY: "${ASSESS_WEB_SEARCH_API_KEY:-}"
+      ASSESS_WEB_SEARCH_CACHE_DAYS: "${ASSESS_WEB_SEARCH_CACHE_DAYS:-30}"
     volumes:
       - agent-data:/app/data
       - backend-data:/shared/backend-data:ro

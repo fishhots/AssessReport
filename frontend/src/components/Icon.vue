@@ -38,6 +38,12 @@ import {
   LogIn,
   LogOut,
   UserPlus,
+  Globe,
+  Wifi,
+  Eye,
+  Terminal,
+  Archive,
+  FileDown,
 } from '@lucide/vue'
 defineProps<{ name: string; size?: number }>()
 const icons: Record<string, unknown> = {
@@ -79,6 +85,12 @@ const icons: Record<string, unknown> = {
   LogIn,
   LogOut,
   UserPlus,
+  Globe,
+  Wifi,
+  Eye,
+  Terminal,
+  Archive,
+  FileDown,
 }
 </script>
 <template>

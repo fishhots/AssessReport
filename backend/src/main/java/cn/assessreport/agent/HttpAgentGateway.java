@@ -22,6 +22,7 @@ import java.util.function.Supplier;
 public class HttpAgentGateway implements AgentGateway {
     private final RestClient client;
     private final RestClient modelClient;
+    private final RestClient webClient;
     public HttpAgentGateway(@Value("${app.agent.base-url}") String baseUrl,
             @Value("${app.agent.token:}") String token, ObjectMapper mapper, UserContext users) {
         var factory = new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
@@ -60,6 +61,15 @@ public class HttpAgentGateway implements AgentGateway {
                         case "JOB_DELETE" -> "报告缓存路径无效，暂时无法删除";
                         case "ARTIFACT_PENDING" -> "输出尚未完成";
                         case "ARTIFACT_CHANGED", "ARTIFACT_MISSING" -> "输出文件校验失败，请重新执行";
+                        case "WEB_SEARCH_NOT_CONFIGURED" -> "尚未配置联网搜索密钥：请在模型设置中保存 DeepSeek API Key";
+                        case "WEB_SEARCH_AUTH" -> "联网搜索认证失败，请检查 DeepSeek API Key";
+                        case "WEB_SEARCH_QUOTA" -> "DeepSeek 账号余额不足，联网搜索不可用";
+                        case "WEB_SEARCH_RATE_LIMIT" -> "联网搜索已限流，请稍后重试";
+                        case "WEB_SEARCH_CONNECTION" -> "无法连接联网搜索服务，请检查网络或代理";
+                        case "WEB_SEARCH_TIMEOUT" -> "联网搜索超时，请稍后重试";
+                        case "WEB_SEARCH_DIRECTIVE", "WEB_SEARCH_URL" -> "检索指令无效，请检查学校名称、官网域名和主题";
+                        case "WEB_SEARCH_UNAVAILABLE", "WEB_SEARCH_RESPONSE" -> "联网搜索服务暂时不可用，请稍后重试";
+                        case "WEB_ARCHIVE_NOT_FOUND" -> "归档条目不存在";
                         default -> "智能体请求失败，请检查配置和资料后重试";
                     };
                 } catch (Exception ignored) { }
@@ -68,6 +78,10 @@ public class HttpAgentGateway implements AgentGateway {
         var modelFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
         modelFactory.setReadTimeout(Duration.ofSeconds(200));
         modelClient = client.mutate().requestFactory(modelFactory).build();
+        // Search + multiple Fetch calls can take far longer than a normal gateway call.
+        var webFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+        webFactory.setReadTimeout(Duration.ofSeconds(180));
+        webClient = client.mutate().requestFactory(webFactory).build();
     }
     private <T> T call(Supplier<T> action) {
         try { return action.get(); }
@@ -104,5 +118,43 @@ public class HttpAgentGateway implements AgentGateway {
     }
     public ModelConfig saveModelConfig(String provider, ModelConfigInput config) {
         return call(() -> client.put().uri("/models/{provider}/config", provider).body(config).retrieve().body(ModelConfig.class));
+    }
+    public Map<String, Object> webSearchStatus() {
+        return call(() -> webClient.get().uri("/web-search/status").retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webSearchPreview(Object directive) {
+        return call(() -> webClient.post().uri("/web-search/preview").body(directive).retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webSearchRun(Object directive) {
+        return call(() -> webClient.post().uri("/web-search/run").body(directive).retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webSearchTest() {
+        return call(() -> webClient.post().uri("/web-search/test").retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webArchive(String school, String topic, int limit) {
+        return call(() -> webClient.get().uri(builder -> builder.path("/web-archive")
+                .queryParam("school", school == null ? "" : school)
+                .queryParam("topic", topic == null ? "" : topic)
+                .queryParam("limit", limit).build()).retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webArchivePending(int limit) {
+        return call(() -> webClient.get().uri(builder -> builder.path("/web-archive/pending")
+                .queryParam("limit", limit).build()).retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public Map<String, Object> webArchiveEntry(String id) {
+        return call(() -> webClient.get().uri("/web-archive/{id}", id).retrieve()
+                .body(new ParameterizedTypeReference<Map<String,Object>>() {}));
+    }
+    public void webArchiveMaterialized(Map<String, Object> payload) {
+        call(() -> webClient.post().uri("/web-archive/materialized").body(payload).retrieve().toBodilessEntity());
+    }
+    public void webArchiveDelete(String id) {
+        call(() -> webClient.delete().uri("/web-archive/{id}", id).retrieve().toBodilessEntity());
     }
 }

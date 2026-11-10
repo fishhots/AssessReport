@@ -209,6 +209,9 @@ class SectionWriter:
         system = (SERVICE_ROOT / "prompts/system.md").read_text(encoding="utf-8")
         system += "\n\n" + "\n\n".join(self.skill(name) for name in (
             "source-evidence", "table-analysis", "deep-diagnosis" if diagnosis else "quality-report", "charts-tables", "review-export"))
+        # Only attach web-search instructions when the task actually exposes those tools.
+        if self.evidence.web_tools_provider:
+            system += "\n\n" + (SERVICE_ROOT / "prompts/web-search.md").read_text(encoding="utf-8")
         if self.evidence.visuals:
             self.evidence.visuals.active_title = title
         chapter = next((c for c in REPORT_CONFIG['chapters'] if c['title'] == title), {})

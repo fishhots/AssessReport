@@ -26,6 +26,8 @@ from .parsers import source_path
 from .schemas import JobRequest
 from .settings import Settings
 from .store import JobStore
+from .web_contracts import WebSearchDirective
+from .web_search import WebSearchService
 from .workflow import run_workflow
 from .export_resume import export_snapshot_directory
 from .cache_management import cleanup_terminal_task, cleanup_completed_jobs
@@ -100,8 +102,12 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def handle_validation(request: Request, error: RequestValidationError):
         is_config = request.url.path.startswith("/models/")
-        return JSONResponse(status_code=422, content={"code": "MODEL_CONFIG" if is_config else "INVALID_REQUEST",
-            "message": "请检查模型名称、密钥、接口地址和额外参数" if is_config else "任务参数不符合约定，请检查学校、年份、章节和资料 ID"})
+        is_web = request.url.path.startswith("/web-search/")
+        code = "MODEL_CONFIG" if is_config else "INVALID_REQUEST"
+        message = ("请检查模型名称、密钥、接口地址和额外参数" if is_config else
+                   "联网检索指令无效，请检查学校名称、官网域名和检索主题" if is_web else
+                   "任务参数不符合约定，请检查学校、年份、章节和资料 ID")
+        return JSONResponse(status_code=422, content={"code": code, "message": message})
 
     def preflight(request: JobRequest, settings: Settings):
         if model is None:
@@ -149,6 +155,58 @@ def create_app(settings: Settings | None = None, model=None) -> FastAPI:
     @app.get("/health")
     def health():
         return {"status": "UP", "framework": "langchain", "version": "0.1.0"}
+
+    def web_service(runtime: WorkspaceRuntime) -> WebSearchService:
+        return WebSearchService(runtime.settings, runtime.settings.data_root)
+
+    @app.get("/web-search/status", dependencies=[Depends(authorize)])
+    def web_search_status(runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return web_service(runtime).status()
+
+    @app.post("/web-search/preview", dependencies=[Depends(authorize)])
+    def web_search_preview(directive: WebSearchDirective, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return web_service(runtime).preview(directive)
+
+    @app.post("/web-search/test", dependencies=[Depends(authorize)])
+    def web_search_test(runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        # 一次最小成功调用；会产生一次按次计费的 Search 请求。
+        results = web_service(runtime).client.search("教育部 高等教育 质量", count=1, need_content=False)
+        return {"status": "OK", "results": len(results)}
+
+    @app.post("/web-search/run", dependencies=[Depends(authorize)])
+    def web_search_run(directive: WebSearchDirective, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        outcome = web_service(runtime).run(directive)
+        if not outcome["count"] and outcome["errors"]:
+            first = outcome["errors"][0]
+            raise AgentError(first["code"], first["message"])
+        return outcome
+
+    @app.get("/web-archive", dependencies=[Depends(authorize)])
+    def web_archive_list(school: str = "", topic: str = "", limit: int = 50,
+                         runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        service = web_service(runtime)
+        return {"entries": service.archive.list(school, topic, limit=limit), "stats": service.archive.stats()}
+
+    @app.get("/web-archive/pending", dependencies=[Depends(authorize)])
+    def web_archive_pending(limit: int = 50, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return {"entries": web_service(runtime).archive.pending(limit)}
+
+    @app.post("/web-archive/materialized", status_code=204, dependencies=[Depends(authorize)])
+    def web_archive_materialized(payload: dict, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            raise AgentError("WEB_ARCHIVE_ARGUMENT", "入库回执格式无效")
+        web_service(runtime).archive.mark_materialized([item for item in items if isinstance(item, dict)])
+        return Response(status_code=204)
+
+    @app.get("/web-archive/{entry_id}", dependencies=[Depends(authorize)])
+    def web_archive_entry(entry_id: str, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        return web_service(runtime).archive.get(entry_id)
+
+    @app.delete("/web-archive/{entry_id}", status_code=204, dependencies=[Depends(authorize)])
+    def web_archive_delete(entry_id: str, runtime: WorkspaceRuntime = Depends(tenant_runtime)):
+        web_service(runtime).archive.delete(entry_id)
+        return Response(status_code=204)
 
     @app.get("/models", dependencies=[Depends(authorize)])
     def models(runtime: WorkspaceRuntime = Depends(tenant_runtime)):

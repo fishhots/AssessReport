@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Icon from './components/Icon.vue'
 import DiagnosisFramework from './components/DiagnosisFramework.vue'
 import ModelSettingsDialog from './components/ModelSettingsDialog.vue'
+import WebSearchPanel from './components/WebSearchPanel.vue'
 import AuthScreen from './components/AuthScreen.vue'
 import { diagnosisDimensions, plannedOutputs } from './diagnosisFramework'
 import { api, ApiError, setSessionUser } from './api'
@@ -14,11 +15,12 @@ const sessionError = ref('')
 const signingOut = ref(false)
 const draftStorageKey = () => `assess-report-draft:${currentUser.value?.id}`
 
-type Page = 'workspace' | 'diagnosis' | 'materials' | 'reports' | 'models'
+type Page = 'workspace' | 'diagnosis' | 'materials' | 'websearch' | 'reports' | 'models'
 const nav = [
   { id: 'workspace', label: '报告工作台', icon: 'LayoutDashboard' },
   { id: 'diagnosis', label: '个性化报告', icon: 'ClipboardList' },
   { id: 'materials', label: '资料库', icon: 'FolderOpen' },
+  { id: 'websearch', label: '联网检索', icon: 'Globe' },
   { id: 'reports', label: '报告记录', icon: 'FileText' },
   { id: 'models', label: '模型设置', icon: 'SlidersHorizontal' },
 ] as const
@@ -67,6 +69,8 @@ const instructions = ref('')
 const customTopicEnabled = ref(false)
 const customTopicTitle = ref('')
 const customTopicRequirements = ref('')
+const webSearchAuto = ref(false)
+const webSearchSite = ref('')
 const activeReport = ref<ReportTask | null>(null)
 const isLegacyReport = (task: ReportTask) => task.status === 'SUCCEEDED' && task.steps.some((step) => step.name === '深度诊断')
 const activeOutputs = computed(() => activeReport.value && isLegacyReport(activeReport.value)
@@ -214,6 +218,8 @@ async function load() {
         customTopicEnabled.value = draft.customTopicEnabled === true
         if (typeof draft.customTopicTitle === 'string') customTopicTitle.value = draft.customTopicTitle
         if (typeof draft.customTopicRequirements === 'string') customTopicRequirements.value = draft.customTopicRequirements
+        webSearchAuto.value = draft.webSearchAuto === true
+        if (typeof draft.webSearchSite === 'string') webSearchSite.value = draft.webSearchSite
         if (Array.isArray(draft.selectedIds))
           selectedIds.value = draft.selectedIds.filter((id: string) => nextMaterials.some((m) => m.id === id))
         chapters.value =
@@ -247,6 +253,8 @@ function saveDraft(showToast = true) {
         customTopicEnabled: customTopicEnabled.value,
         customTopicTitle: customTopicTitle.value,
         customTopicRequirements: customTopicRequirements.value,
+        webSearchAuto: webSearchAuto.value,
+        webSearchSite: webSearchSite.value,
         selectedIds: selectedIds.value,
       }),
     )
@@ -256,7 +264,7 @@ function saveDraft(showToast = true) {
   }
 }
 watch(
-  [school, year, modelId, chapters, instructions, selectedIds, customTopicEnabled, customTopicTitle, customTopicRequirements],
+  [school, year, modelId, chapters, instructions, selectedIds, customTopicEnabled, customTopicTitle, customTopicRequirements, webSearchAuto, webSearchSite],
   () => {
     if (!loading.value && catalog.value) saveDraft(false)
   },
@@ -335,6 +343,16 @@ async function createReport() {
       chapters: chapters.value,
       instructions: instructions.value,
       customTopic: customTopicEnabled.value ? { title: customTopicTitle.value.trim(), requirements: customTopicRequirements.value.trim() } : null,
+      webSearch: webSearchAuto.value ? {
+        enabled: true,
+        school: school.value.trim(),
+        site: webSearchSite.value.trim(),
+        topics: ['leadership_speech', 'strategic_plan', 'school_profile'],
+        maxResults: 4,
+        maxPages: 8,
+        refresh: false,
+        fetchContent: true,
+      } : null,
     })
     reports.value = [report, ...reports.value]
     activeReport.value = report
@@ -504,6 +522,8 @@ function clearWorkspaceState() {
   customTopicEnabled.value = false
   customTopicTitle.value = ''
   customTopicRequirements.value = ''
+  webSearchAuto.value = false
+  webSearchSite.value = ''
   modelTestResults.value = {}
   editingModel.value = null
   deletedReportIds.clear()
@@ -870,6 +890,26 @@ onUnmounted(() => {
                         placeholder="说明希望回答的问题、分析范围和建议重点。" />
                       <span class="character-count">{{ customTopicRequirements.length }} / 4000</span>
                     </label>
+                  </template>
+                </section>
+                <section class="panel">
+                  <div class="panel-heading">
+                    <div class="section-heading">
+                      <span class="section-icon"><Icon name="Globe" :size="19" /></span>
+                      <div>
+                        <h3>联网检索学校官网</h3>
+                        <p>生成前自动获取领导讲话、战略规划等公开信息，并归档进资料库</p>
+                      </div>
+                    </div>
+                    <label><input v-model="webSearchAuto" type="checkbox" /> 本次启用</label>
+                  </div>
+                  <template v-if="webSearchAuto">
+                    <label class="field full"><span>学校官网域名（推荐填写）</span>
+                      <input v-model="webSearchSite" maxlength="200" placeholder="例如：bistu.edu.cn，留空则不限定站点" />
+                    </label>
+                    <p style="color: var(--muted); font-size: 12px; line-height: 1.6; margin: 10px 0 0">
+                      检索结果会作为可引用证据加入本次任务，同时自动登记到资料库供以后复用；也可在「联网检索」页面单独执行和管理。
+                    </p>
                   </template>
                 </section>
                 <section class="panel">
@@ -1315,6 +1355,9 @@ onUnmounted(() => {
                 </button>
               </article>
             </div>
+          </template>
+          <template v-else-if="page === 'websearch'">
+            <WebSearchPanel :default-school="school" @changed="load" />
           </template>
           <footer class="main-footer">
             <span>教学质量报告智能体</span><span>以数据为依据，以改进为方向</span>

@@ -99,11 +99,45 @@ def run_workflow(request: JobRequest, settings: Settings, jobs: JobStore, attemp
         check_time()
         model_config = validate_provider(settings, request.model_id) if model is None else {'provider': 'offline-test'}
         runtime['model_config'] = model_config
-        runtime['cache'] = RetryCache(directory, workflow_identity(request, corpus, settings, model_config))
         runtime['resumed_titles'] = []
         runtime['resumed_drafts'] = []
         runtime["evidence"] = EvidenceStore(corpus)
         runtime["evidence"].cancel_check = lambda: jobs.ensure_active(task_id, attempt)
+
+        # 联网检索：程序化预取保证无工具思考路径（DeepSeek）也能引用官网资料；
+        # 工具循环路径则额外获得按需检索能力。失败只降级，不阻断报告生成。
+        from .web_search import WebSearchService
+        from .web_tools import inject_web_evidence
+        directive = request.web_search
+        auto_fetch = bool(directive and directive.enabled)
+        web_enabled = bool(settings.web_search_enabled or auto_fetch)
+        web_service = WebSearchService(settings, settings.data_root) if web_enabled else None
+        if auto_fetch and web_service:
+            check_time()
+            try:
+                outcome = web_service.run(directive.with_school(request.school))
+                added = inject_web_evidence(runtime["evidence"], outcome["entries"],
+                                            max_pages=settings.web_search_max_pages)
+                write_json(directory / 'web-search.json', {
+                    'school': outcome['school'], 'site': outcome['site'], 'queries': outcome['queries'],
+                    'pages': [{'id': entry['id'], 'title': entry['title'], 'url': entry['url'],
+                               'topic': entry['topic'], 'category': entry['category'],
+                               'reused': bool(entry.get('reused'))} for entry in outcome['entries']],
+                    'reused': outcome['reused'], 'errors': outcome['errors'], 'evidenceIds': added})
+                if not added:
+                    corpus.warnings.append('联网检索未获取到可用的学校官网资料，本次仍按已上传资料取证')
+            except AgentError as error:
+                corpus.warnings.append(f'联网检索已跳过：{error.message}')
+                write_json(directory / 'web-search.json', {'error': error.code, 'message': error.message})
+            except Exception as error:
+                corpus.warnings.append('联网检索已跳过：服务暂时不可用，本次仍按已上传资料取证')
+                write_json(directory / 'web-search.json', {'error': type(error).__name__})
+        if web_enabled and web_service:
+            runtime["evidence"].web_tools_provider = {
+                'service': web_service, 'school': request.school, 'year': request.year}
+
+        # Corpus now includes any archived web pages, so the retry identity sees them.
+        runtime['cache'] = RetryCache(directory, workflow_identity(request, corpus, settings, model_config))
         runtime["evidence"].survey = SurveyAnalyzer(runtime["evidence"], request.year, request.school).build()
         runtime["evidence"].visuals = VisualRegistry(runtime["evidence"], directory / "visuals", request.year, request.chapters)
         runtime["evidence"].visuals.plan()

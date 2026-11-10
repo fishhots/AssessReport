@@ -8,6 +8,12 @@ import type {
   ReportInput,
   ReportTask,
   AuthUser,
+  WebSearchDirective,
+  WebSearchStatus,
+  WebSearchPreview,
+  WebSearchRunResult,
+  WebArchiveList,
+  WebArchiveEntry,
 } from './types'
 
 let sessionVersion = 0
@@ -100,4 +106,25 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     }),
+  webSearchStatus: () => request<WebSearchStatus>('/web-search/status'),
+  webSearchPreview: (directive: WebSearchDirective) =>
+    request<WebSearchPreview>('/web-search/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(directive),
+    }),
+  webSearchRun: (directive: WebSearchDirective) =>
+    request<WebSearchRunResult>('/web-search/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(directive),
+    }),
+  webSearchTest: () => request<{ status: string; results: number }>('/web-search/test', { method: 'POST' }),
+  webArchive: (school = '', topic = '') =>
+    request<WebArchiveList>(`/web-search/archive?school=${encodeURIComponent(school)}&topic=${encodeURIComponent(topic)}`),
+  webArchiveSync: () => request<WebSearchRunResult>('/web-search/archive/sync', { method: 'POST' }),
+  webArchiveEntry: (id: string) =>
+    request<WebArchiveEntry>(`/web-search/archive/${encodeURIComponent(id)}`),
+  webArchiveDelete: (id: string) =>
+    request<void>(`/web-search/archive/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }

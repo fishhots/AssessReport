@@ -31,6 +31,8 @@ class EvidenceStore:
         self.topic_sources = {}
         self.topic_coverage = {}
         self.inventory = None
+        # 由 workflow 在启用联网检索时注入：{'service', 'school', 'year'}
+        self.web_tools_provider = None
 
     def read(self, evidence_id: str) -> Evidence:
         if evidence_id not in self.by_id:
@@ -260,5 +262,10 @@ class EvidenceStore:
             if not self.survey: return {"error":"SURVEY_NOT_READY", "message":"本次资料暂无问卷题项统计"}
             return guarded(self.survey.analyze, material_id, sheet, question, scope)
 
-        return [list_sources, inspect_data_coverage, read_statistics, search_evidence, read_evidence, inspect_table, summarize_table, calculate_ratio, analyze_survey_question] + (
-            self.visuals.tools() if self.visuals else [])
+        tools = [list_sources, inspect_data_coverage, read_statistics, search_evidence, read_evidence,
+                 inspect_table, summarize_table, calculate_ratio, analyze_survey_question] + (
+                     self.visuals.tools() if self.visuals else [])
+        if self.web_tools_provider:
+            from .web_tools import web_tools
+            tools += web_tools(self, **self.web_tools_provider)
+        return tools
